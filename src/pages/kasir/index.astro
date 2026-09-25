@@ -1,0 +1,966 @@
+---
+// @ts-nocheck
+const BACKEND_URL = import.meta.env.BACKEND_URL || 'http://localhost:3000';
+const jwtToken = Astro.cookies.get('token')?.value;
+const kasir = {
+    id: Astro.cookies.get('idKasir')?.value,
+    nama: Astro.cookies.get('namaKasir')?.value,
+};
+let orders = [];
+let apiError = '';
+let paymentError = '';
+let printData = null;
+
+if (!jwtToken) {
+    return Astro.redirect('/kasir/login');
+}
+
+try {
+    const response = await fetch(`${BACKEND_URL}/api/kasir/antrean`, {
+        headers: { Authorization: `Bearer ${jwtToken}` },
+    });
+    const result = await response.json();
+
+    if (!response.ok || result.status !== 'sukses') {
+        apiError = result.message || 'Antrean pembayaran tidak dapat dimuat.';
+    } else if (Array.isArray(result.data)) {
+        orders = result.data.map((order) => ({
+            ...order,
+            nama_pelanggan: order.nama || order.nama_pelanggan || '-',
+            items: Array.isArray(order.items) ? order.items : [],
+        }));
+    }
+} catch (error) {
+    apiError = 'Backend antrean kasir tidak dapat dihubungi.';
+    console.error(error);
+}
+
+if (Astro.request.method === 'POST') {
+    const formData = await Astro.request.formData();
+    const idPesanan = formData.get('idPesanan');
+    const kembalian = formData.get('kembalian');
+
+    if (typeof idPesanan === 'string' && typeof kembalian === 'string') {
+        const paymentPostData = {
+            id_pesanan: Number(idPesanan),
+            kembalian: Number(kembalian),
+        };
+        const selectedOrder = orders.find(
+            (order) => order.id_pesanan === paymentPostData.id_pesanan,
+        );
+
+        try {
+            const response = await fetch(
+                `${BACKEND_URL}/api/kasir/proses-bayar`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${jwtToken}`,
+                    },
+                    body: JSON.stringify(paymentPostData),
+                },
+            );
+            const result = await response.json();
+
+            if (!response.ok || result.status !== 'sukses') {
+                paymentError =
+                    result.message || 'Pembayaran tunai gagal diproses.';
+            } else {
+                const paymentData = result.data || {};
+                let receiptData = paymentData;
+
+                try {
+                    const receiptResponse = await fetch(
+                        `${BACKEND_URL}/api/pesanan/${encodeURIComponent(
+                            paymentPostData.id_pesanan,
+                        )}/struk`,
+                    );
+                    const receiptResult = await receiptResponse.json();
+
+                    if (
+                        receiptResponse.ok &&
+                        receiptResult.status === 'success' &&
+                        receiptResult.data
+                    ) {
+                        receiptData = receiptResult.data;
+                    }
+                } catch (error) {
+                    console.error(
+                        'Data detail struk tidak dapat dimuat:',
+                        error,
+                    );
+                }
+
+                const receiptItems = Array.isArray(receiptData.items)
+                    ? receiptData.items
+                    : Array.isArray(paymentData.items)
+                      ? paymentData.items
+                      : Array.isArray(selectedOrder?.items)
+                        ? selectedOrder.items
+                        : [];
+
+                printData = {
+                    ...(selectedOrder || {}),
+                    ...paymentData,
+                    ...receiptData,
+                    items: receiptItems,
+                    id_pesanan:
+                        receiptData.id_pesanan ||
+                        paymentData.id_pesanan ||
+                        paymentPostData.id_pesanan,
+                    kembalian: paymentPostData.kembalian,
+                };
+                orders = orders.filter(
+                    (order) => order.id_pesanan !== paymentPostData.id_pesanan,
+                );
+            }
+        } catch (error) {
+            paymentError = 'Backend pembayaran kasir tidak dapat dihubungi.';
+            console.error(error);
+        }
+    } else {
+        paymentError = 'Data pembayaran tidak lengkap.';
+    }
+}
+---
+
+<!doctype html>
+<html lang='id'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta
+            name='viewport'
+            content='width=device-width, initial-scale=1.0'
+        />
+        <title>Dashboard Kasir - Dapur Ina Aina</title>
+        <link
+            href='/css/bootstrap.min.css'
+            rel='stylesheet'
+        />
+        <link
+            rel='stylesheet'
+            href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css'
+        />
+        <script
+            src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
+        ></script>
+        <style>
+            :root {
+                --primary-red: #d92d3a;
+                --soft-bg: #f5f5f5;
+                --paper-bg: #ffffff;
+                --ink: #1f1f1f;
+                --muted: #6b7280;
+                --border: #d9d9d9;
+            }
+
+            body {
+                background-color: var(--soft-bg);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                color: var(--ink);
+            }
+
+            .navbar-kasir {
+                background-color: var(--primary-red);
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            }
+
+            .page-shell {
+                max-width: 1100px;
+                margin: 0 auto;
+            }
+
+            .table-wrapper {
+                background-color: #fff;
+                border-radius: 14px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+                overflow: hidden;
+                padding: 20px;
+                border: 1px solid rgba(0, 0, 0, 0.04);
+            }
+
+            .clickable-row {
+                cursor: pointer;
+                transition: background-color 0.2s ease;
+            }
+
+            .clickable-row:hover {
+                background-color: #fff1f2 !important;
+            }
+
+            .modal-header {
+                background-color: #f8f9fa;
+                border-bottom: 2px solid #dee2e6;
+            }
+
+            .item-list-table td {
+                padding: 0.5rem 0;
+                border-bottom: 1px dashed #dee2e6;
+            }
+
+            .item-list-table tr:last-child td {
+                border-bottom: 0;
+            }
+
+            .input-uang {
+                font-size: 1.5rem;
+                font-weight: bold;
+                text-align: right;
+                border: 2px solid #ced4da;
+                border-radius: 8px;
+            }
+
+            .input-uang:focus {
+                border-color: var(--primary-red);
+                box-shadow: 0 0 0 0.25rem rgba(217, 45, 58, 0.15);
+            }
+
+            .text-kembalian {
+                font-size: 1.5rem;
+                font-weight: bold;
+            }
+
+            .cash-receipt {
+                display: none;
+            }
+
+            .receipt-paper {
+                background-color: var(--paper-bg);
+                max-width: 420px;
+                margin: 0 auto;
+                padding: 24px;
+                font-family: 'Courier New', Courier, monospace;
+                color: var(--ink);
+                box-shadow: 0 10px 32px rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                border: 1px solid rgba(0, 0, 0, 0.05);
+            }
+
+            .receipt-header {
+                text-align: center;
+                margin-bottom: 20px;
+            }
+
+            .receipt-header h4 {
+                font-weight: bold;
+                margin: 0 0 6px;
+                font-family: 'Courier New', Courier, monospace;
+            }
+
+            .receipt-header .receipt-sub {
+                font-size: 0.8rem;
+                color: var(--muted);
+            }
+
+            .dashed-divider {
+                border-bottom: 2px dashed #d1d1d1;
+                margin: 16px 0;
+            }
+
+            .receipt-table {
+                width: 100%;
+                font-size: 0.95rem;
+            }
+
+            .receipt-table td {
+                padding: 4px 0;
+                vertical-align: top;
+            }
+
+            .text-right {
+                text-align: right;
+            }
+
+            .status-stamp {
+                display: inline-block;
+                border: 2px solid #198754;
+                color: #198754;
+                font-size: 1.2rem;
+                font-weight: bold;
+                padding: 4px 16px;
+                border-radius: 4px;
+                transform: rotate(-5deg);
+                margin: 10px 0;
+                letter-spacing: 2px;
+            }
+
+            @media print {
+                @page {
+                    size: A6 portrait;
+                    margin: 0;
+                }
+
+                body {
+                    background: #fff;
+                    width: 105mm;
+                    min-height: 148mm;
+                }
+
+                body * {
+                    visibility: hidden !important;
+                }
+
+                .cash-receipt,
+                .cash-receipt * {
+                    visibility: visible !important;
+                }
+
+                .cash-receipt {
+                    display: block !important;
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 105mm;
+                    min-height: 148mm;
+                    margin: 0;
+                    padding: 0;
+                    background: transparent;
+                    box-shadow: none;
+                }
+
+                .receipt-paper {
+                    max-width: none;
+                    width: 100%;
+                    min-height: 148mm;
+                    box-sizing: border-box;
+                    margin: 0;
+                    box-shadow: none;
+                    border: none;
+                    border-radius: 0;
+                    padding: 10mm 12mm;
+                    background: #fff;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav
+            class='navbar navbar-expand-lg navbar-dark navbar-kasir sticky-top mb-4'
+        >
+            <div class='container-fluid px-4'>
+                <a
+                    class='navbar-brand fw-bold'
+                    href='/'
+                    ><i class='bi bi-shop me-2'></i>Panel Kasir - Dapur Ina Aina</a
+                >
+                <div class='d-flex align-items-center'>
+                    <span class='text-white me-3 d-none d-md-inline'
+                        ><i class='bi bi-person-circle me-1'></i>Halo, {
+                            kasir.nama
+                        } ({kasir.id})</span
+                    >
+                    <form
+                        action='/kasir/logout'
+                        method='POST'
+                    >
+                        <button
+                            class='btn btn-outline-light btn-sm rounded-pill px-3'
+                            type='submit'
+                            >Keluar</button
+                        >
+                    </form>
+                </div>
+            </div>
+        </nav>
+
+        <main class='container-fluid px-4 pb-5'>
+            <div class='page-shell'>
+                <div
+                    class='d-flex justify-content-between align-items-center mb-3'
+                >
+                    <h1 class='h4 fw-bold text-secondary mb-0'>
+                        Antrean Pembayaran Tunai
+                    </h1>
+                    <button
+                        class='btn btn-primary btn-sm rounded-pill px-3'
+                        type='button'
+                        onclick='window.location.href = "/kasir"'
+                        ><i class='bi bi-arrow-clockwise me-1'
+                        ></i>Segarkan</button
+                    >
+                </div>
+                {
+                    apiError && (
+                        <div
+                            class='alert alert-danger'
+                            role='alert'
+                        >
+                            {apiError}
+                        </div>
+                    )
+                }
+                {
+                    paymentError && (
+                        <div
+                            class='alert alert-danger'
+                            role='alert'
+                        >
+                            {paymentError}
+                        </div>
+                    )
+                }
+                <div class='table-wrapper table-responsive'>
+                    <table
+                        class:list={[
+                            'table table-hover align-middle mb-0',
+                            orders.length === 0 && 'd-none',
+                        ]}
+                        id='queueTable'
+                    >
+                        <thead class='table-light text-secondary'>
+                            <tr
+                                ><th
+                                    scope='col'
+                                    class='py-3'
+                                    >ID Pesanan</th
+                                ><th scope='col'>Tgl & Waktu</th><th scope='col'
+                                    >Pelanggan</th
+                                ><th
+                                    scope='col'
+                                    class='text-center'
+                                    >No. Meja</th
+                                ><th
+                                    scope='col'
+                                    class='text-end'
+                                    >Total Harga</th
+                                ><th
+                                    scope='col'
+                                    class='text-center'
+                                    >Status</th
+                                ></tr
+                            >
+                        </thead>
+                        <tbody id='tabelAntrean'></tbody>
+                    </table>
+                    <div
+                        class:list={[
+                            'text-center py-5',
+                            orders.length > 0 && 'd-none',
+                        ]}
+                        id='emptyState'
+                    >
+                        <i
+                            class='bi bi-check2-circle text-success'
+                            style='font-size: 3rem'
+                        ></i>
+                        <h2 class='h5 mt-3 text-muted'>
+                            Semua pesanan tunai sudah diselesaikan.
+                        </h2>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        {
+            printData && (
+                <section class='cash-receipt'>
+                    <div class='receipt-paper'>
+                        <div class='receipt-header'>
+                            <i class='bi bi-shop fs-1 text-dark' />
+                            <h4 class='mt-2'>DAPUR INA AINA</h4>
+                            <div class='small'>
+                                Jl. Raya Kenangan No.123, Depok
+                            </div>
+                            <div class='small'>Telp: 0812-3456-7890</div>
+                        </div>
+
+                        <div class='dashed-divider' />
+
+                        <table class='receipt-table'>
+                            <tr>
+                                <td>Order ID</td>
+                                <td class='text-right'>
+                                    #DIA-
+                                    {String(printData.id_pesanan).padStart(
+                                        4,
+                                        '0',
+                                    )}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Tanggal</td>
+                                <td class='text-right'>
+                                    {printData.tgl_bayar ||
+                                        printData.tgl_pesanan ||
+                                        '-'}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Pelanggan</td>
+                                <td class='text-right'>
+                                    {printData.nama_pelanggan ||
+                                        printData.nama ||
+                                        '-'}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Meja</td>
+                                <td class='text-right'>
+                                    {printData.no_meja || '-'}
+                                </td>
+                            </tr>
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <table class='receipt-table'>
+                            {(printData.items || []).map((item) => (
+                                <>
+                                    <tr>
+                                        <td
+                                            colspan='2'
+                                            class='fw-bold pb-1'
+                                        >
+                                            {item.nama_produk ||
+                                                item.name ||
+                                                '-'}
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            {item.qty || item.jumlah_beli || 0}{' '}
+                                            x Rp{' '}
+                                            {Number(
+                                                item.harga ||
+                                                    item.harga_satuan ||
+                                                    0,
+                                            ).toLocaleString('id-ID')}
+                                        </td>
+                                        <td class='text-right'>
+                                            Rp{' '}
+                                            {Number(
+                                                item.sub_total || 0,
+                                            ).toLocaleString('id-ID')}
+                                        </td>
+                                    </tr>
+                                </>
+                            ))}
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <table class='receipt-table fw-bold'>
+                            <tr>
+                                <td>TOTAL BAYAR</td>
+                                <td class='text-right'>
+                                    Rp{' '}
+                                    {Number(
+                                        printData.total_harga ||
+                                            printData.total_tagihan ||
+                                            0,
+                                    ).toLocaleString('id-ID')}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>KEMBALIAN</td>
+                                <td class='text-right'>
+                                    Rp{' '}
+                                    {Number(
+                                        printData.kembalian || 0,
+                                    ).toLocaleString('id-ID')}
+                                </td>
+                            </tr>
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <div class='text-center mt-3'>
+                            <div class='small mb-1'>Status Pembayaran</div>
+                            <div class='status-stamp'>
+                                {printData.status_pembayaran || 'Berhasil'}
+                            </div>
+                            <div class='small mt-2'>
+                                Metode: {printData.metode || 'Tunai'}
+                            </div>
+                        </div>
+
+                        <div class='text-center mt-4 pt-2'>
+                            <div class='small'>
+                                Terima Kasih Atas Kunjungan Anda
+                            </div>
+                            <div class='small'>Silakan datang kembali :)</div>
+                        </div>
+                    </div>
+                </section>
+            )
+        }
+
+        <div
+            class='modal fade'
+            id='paymentModal'
+            tabindex='-1'
+            aria-labelledby='paymentModalLabel'
+            aria-hidden='true'
+            data-bs-backdrop='static'
+        >
+            <div class='modal-dialog modal-dialog-centered modal-lg'>
+                <div class='modal-content border-0 rounded-4 shadow'>
+                    <div class='modal-header'>
+                        <h2
+                            class='modal-title h5 fw-bold'
+                            id='paymentModalLabel'
+                        >
+                            <i class='bi bi-receipt me-2 text-danger'></i>Detail
+                            Pesanan <span
+                                id='modalOrderId'
+                                class='text-danger'
+                            ></span>
+                        </h2>
+                        <button
+                            type='button'
+                            class='btn-close'
+                            data-bs-dismiss='modal'
+                            aria-label='Tutup'
+                        ></button>
+                    </div>
+                    <div class='modal-body p-4'>
+                        <div class='row g-4'>
+                            <div class='col-md-6 border-end'>
+                                <h3
+                                    class='h6 fw-bold text-secondary text-uppercase mb-3'
+                                >
+                                    Informasi Pesanan
+                                </h3>
+                                <table
+                                    class='table table-sm table-borderless mb-4'
+                                >
+                                    <tr
+                                        ><td
+                                            class='text-muted'
+                                            width='40%'
+                                            >Pelanggan</td
+                                        ><td
+                                            id='modalNama'
+                                            class='fw-bold'
+                                            >-</td
+                                        ></tr
+                                    ><tr
+                                        ><td class='text-muted'>No. Meja</td><td
+                                            ><span
+                                                id='modalMeja'
+                                                class='badge bg-dark'
+                                                >-</span
+                                            ></td
+                                        ></tr
+                                    ><tr
+                                        ><td class='text-muted'>Waktu</td><td
+                                            id='modalWaktu'>-</td
+                                        ></tr
+                                    >
+                                </table>
+                                <h3
+                                    class='h6 fw-bold text-secondary text-uppercase mb-2'
+                                >
+                                    Daftar Item
+                                </h3>
+                                <div
+                                    class='table-responsive'
+                                    style='max-height: 200px'
+                                >
+                                    <table
+                                        class='table item-list-table w-100'
+                                        id='modalItems'
+                                    >
+                                    </table>
+                                </div>
+                            </div>
+                            <div class='col-md-6'>
+                                <h3
+                                    class='h6 fw-bold text-secondary text-uppercase mb-3'
+                                >
+                                    Kalkulator Pembayaran
+                                </h3>
+                                <div class='bg-light p-3 rounded-3 mb-4'>
+                                    <span class='text-muted'
+                                        >Total Tagihan:</span
+                                    ><div
+                                        class='text-danger fw-bold fs-2 text-end'
+                                        id='modalTotalTagihan'
+                                    >
+                                        Rp 0
+                                    </div>
+                                </div>
+                                <form
+                                    id='formPembayaranKasir'
+                                    action={Astro.url.pathname}
+                                    method='POST'
+                                >
+                                    <input
+                                        type='hidden'
+                                        name='idPesanan'
+                                        id='hiddenIdPesanan'
+                                    />
+                                    <input
+                                        type='hidden'
+                                        name='kembalian'
+                                        id='hiddenKembalian'
+                                    />
+                                    <label
+                                        for='inputUangDiterima'
+                                        class='form-label fw-bold text-secondary'
+                                        >Uang Diterima (Rp)</label
+                                    >
+                                    <div class='input-group'>
+                                        <span
+                                            class='input-group-text bg-white border-end-0 fw-bold'
+                                            >Rp</span
+                                        ><input
+                                            type='number'
+                                            class='form-control input-uang border-start-0'
+                                            id='inputUangDiterima'
+                                            placeholder='0'
+                                            autocomplete='off'
+                                            required
+                                        />
+                                    </div>
+                                    <div
+                                        class='form-text text-danger d-none'
+                                        id='errorUangKurang'
+                                    >
+                                        Uang yang diterima kurang!
+                                    </div>
+                                    <div class='mb-4 mt-4'>
+                                        <label
+                                            class='form-label fw-bold text-secondary'
+                                            >Uang Kembalian</label
+                                        ><div
+                                            class='text-end text-kembalian text-success'
+                                            id='labelKembalian'
+                                        >
+                                            Rp 0
+                                        </div>
+                                    </div>
+                                    <button
+                                        type='submit'
+                                        class='btn btn-danger w-100 py-3 fw-bold rounded-3 shadow-sm'
+                                        id='btnKonfirmasi'
+                                        disabled
+                                        ><i class='bi bi-check-circle-fill me-2'
+                                        ></i>Konfirmasi Pembayaran</button
+                                    >
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script
+            src='/js/bootstrap.bundle.min.js'
+            is:inline
+        ></script>
+        <script is:inline define:vars={{ orders, printData }}>
+            let dataPesananTunai = orders;
+            const rupiah = (value) =>
+                new Intl.NumberFormat('id-ID', {
+                    style: 'currency',
+                    currency: 'IDR',
+                    minimumFractionDigits: 0,
+                }).format(Number(value || 0));
+            const waktu = (value) =>
+                new Date(value).toLocaleDateString('id-ID', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                });
+            const modal = new bootstrap.Modal(
+                document.getElementById('paymentModal'),
+            );
+
+            function renderTable() {
+                const tbody = document.getElementById('tabelAntrean');
+                tbody.innerHTML = '';
+                const empty = dataPesananTunai.length === 0;
+                document
+                    .getElementById('queueTable')
+                    .classList.toggle('d-none', empty);
+                document
+                    .getElementById('emptyState')
+                    .classList.toggle('d-none', !empty);
+                dataPesananTunai.forEach((order) => {
+                    const row = document.createElement('tr');
+                    row.className = 'clickable-row';
+                    row.innerHTML = `<td class="fw-bold text-danger">#DIA-${order.id_pesanan}</td><td class="small">${waktu(order.tgl_pesanan)}</td><td class="fw-bold">${order.nama_pelanggan}</td><td class="text-center"><span class="badge bg-secondary px-3 py-2 fs-6">${order.no_meja}</span></td><td class="text-end fw-bold">${rupiah(order.total_harga)}</td><td class="text-center"><span class="badge bg-warning text-dark"><i class="bi bi-clock me-1"></i>Menunggu</span></td>`;
+                    row.addEventListener('click', () => openOrder(order));
+                    tbody.appendChild(row);
+                });
+            }
+
+            function openOrder(order) {
+                document.getElementById('modalOrderId').textContent =
+                    `DIA-${order.id_pesanan}`;
+                document.getElementById('modalNama').textContent =
+                    order.nama_pelanggan;
+                document.getElementById('modalMeja').textContent =
+                    order.no_meja;
+                document.getElementById('modalWaktu').textContent = waktu(
+                    order.tgl_pesanan,
+                );
+                document.getElementById('modalTotalTagihan').textContent =
+                    rupiah(order.total_harga);
+                document.getElementById('inputUangDiterima').value = '';
+                document.getElementById('labelKembalian').textContent = 'Rp 0';
+                document.getElementById('labelKembalian').className =
+                    'text-end text-kembalian text-success';
+                document
+                    .getElementById('errorUangKurang')
+                    .classList.add('d-none');
+                document.getElementById('btnKonfirmasi').disabled = true;
+                document.getElementById('btnKonfirmasi').dataset.orderId =
+                    order.id_pesanan;
+                document.getElementById('btnKonfirmasi').dataset.total =
+                    order.total_harga;
+                document.getElementById('modalItems').innerHTML = order.items
+                    .length
+                    ? order.items
+                          .map(
+                              (item) =>
+                                  `<tr><td class="text-muted small">${item.qty || item.jumlah_beli || 0}x</td><td class="fw-medium">${item.nama_produk || item.name || '-'}</td><td class="text-end small">${rupiah(item.sub_total || 0)}</td></tr>`,
+                          )
+                          .join('')
+                    : `<tr><td class="text-muted small">Detail item belum tersedia.</td></tr>`;
+                modal.show();
+            }
+
+            document
+                .getElementById('inputUangDiterima')
+                .addEventListener('input', (event) => {
+                    const received = Number(event.target.value || 0);
+                    const total = Number(
+                        document.getElementById('btnKonfirmasi').dataset
+                            .total || 0,
+                    );
+                    const change = received - total;
+                    const label = document.getElementById('labelKembalian');
+                    const error = document.getElementById('errorUangKurang');
+                    const button = document.getElementById('btnKonfirmasi');
+                    if (!event.target.value) {
+                        label.textContent = 'Rp 0';
+                        label.className =
+                            'text-end text-kembalian text-success';
+                        error.classList.add('d-none');
+                        button.disabled = true;
+                    } else if (change < 0) {
+                        label.textContent = `Kurang: ${rupiah(Math.abs(change))}`;
+                        label.className = 'text-end text-kembalian text-danger';
+                        error.classList.remove('d-none');
+                        button.disabled = true;
+                    } else {
+                        label.textContent = rupiah(change);
+                        label.className =
+                            'text-end text-kembalian text-success';
+                        error.classList.add('d-none');
+                        button.disabled = false;
+                    }
+                });
+
+            document
+                .getElementById('formPembayaranKasir')
+                .addEventListener('submit', (event) => {
+                    const button = document.getElementById('btnKonfirmasi');
+                    const idPesanan = Number(button.dataset.orderId);
+                    const kembalian = Number(
+                        document
+                            .getElementById('labelKembalian')
+                            .textContent.replace(/[^\d-]/g, '') || 0,
+                    );
+
+                    document.getElementById('hiddenIdPesanan').value =
+                        idPesanan;
+                    document.getElementById('hiddenKembalian').value =
+                        kembalian;
+
+                    console.log('Debug payload POST konfirmasi pembayaran:', {
+                        idPesanan,
+                        kembalian,
+                    });
+
+                    button.disabled = true;
+                    button.innerHTML =
+                        '<span class="spinner-border spinner-border-sm me-2"></span>Memproses...';
+                });
+
+            renderTable();
+
+            function printReceiptCanvas() {
+                const receipt = document.querySelector('.receipt-paper');
+                if (!receipt || typeof html2canvas !== 'function') return;
+
+                const renderContainer = document.createElement('div');
+                renderContainer.style.position = 'fixed';
+                renderContainer.style.left = '-10000px';
+                renderContainer.style.top = '0';
+                renderContainer.style.width = '105mm';
+                renderContainer.style.background = '#fff';
+                renderContainer.style.zIndex = '-1';
+
+                const receiptClone = receipt.cloneNode(true);
+                receiptClone.style.display = 'block';
+                receiptClone.style.width = '105mm';
+                receiptClone.style.maxWidth = 'none';
+                receiptClone.style.minHeight = '148mm';
+                receiptClone.style.boxSizing = 'border-box';
+                receiptClone.style.padding = '10mm 12mm';
+                receiptClone.style.boxShadow = 'none';
+                receiptClone.style.border = 'none';
+                renderContainer.appendChild(receiptClone);
+                document.body.appendChild(renderContainer);
+
+                html2canvas(receiptClone, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                })
+                    .then((canvas) => {
+                        const printWindow = window.open('', '', 'popup=yes');
+                        if (!printWindow) return;
+
+                        const printMarkup = `
+                            <!doctype html>
+                            <html lang="id">
+                                <head>
+                                    <title>Struk Pembayaran</title>
+                                    <style>
+                                        @page { size: A6 portrait; margin: 0; }
+                                        html, body {
+                                            margin: 0;
+                                            padding: 0;
+                                            background: #fff;
+                                        }
+                                        img {
+                                            display: block;
+                                            width: 105mm;
+                                            height: auto;
+                                        }
+                                    </style>
+                                __LT__/head>
+                                <body>
+                                    <img src="${canvas.toDataURL('image/png')}" alt="Struk pembayaran" />
+                                __LT__/body>
+                            __LT__/html>
+                        `;
+                        printWindow.document.write(
+                            printMarkup.replaceAll('__LT__', '<'),
+                        );
+                        printWindow.document.close();
+                        printWindow.onload = () => {
+                            printWindow.print();
+                            printWindow.onafterprint = () =>
+                                printWindow.close();
+                        };
+                    })
+                    .finally(() => renderContainer.remove());
+            }
+
+            if (printData) {
+                window.addEventListener('load', () => {
+                    window.setTimeout(printReceiptCanvas, 250);
+                });
+            }
+        </script>
+    </body>
+</html>

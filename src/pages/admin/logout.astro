@@ -1,0 +1,8 @@
+---
+// @ts-nocheck
+for (const cookieName of ['tokenAdmin']) {
+    Astro.cookies.delete(cookieName, { path: '/' });
+}
+
+return Astro.redirect('/admin/login');
+---

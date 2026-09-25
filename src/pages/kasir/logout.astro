@@ -1,0 +1,10 @@
+---
+// @ts-nocheck
+const cookieNames = ['token', 'idKasir', 'namaKasir'];
+
+for (const cookieName of cookieNames) {
+    Astro.cookies.delete(cookieName, { path: '/' });
+}
+
+return Astro.redirect('/kasir/login');
+---

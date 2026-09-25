@@ -1,0 +1,1228 @@
+---
+// @ts-nocheck
+const BACKEND_URL = import.meta.env.BACKEND_URL;
+const token = Astro.cookies.get('tokenAdmin')?.value;
+if (!token) return Astro.redirect('/admin/login');
+
+const startDate = Astro.url.searchParams.get('startDate');
+const endDate = Astro.url.searchParams.get('endDate');
+const headers = { Authorization: `Bearer ${token}` };
+const empty = {
+    dashboard: {},
+    categories: [],
+    products: [],
+    report: { list_penjualan: [], total_keseluruhan: 0 },
+};
+let data = empty;
+let apiError = '';
+
+const get = async (path) => {
+    const response = await fetch(`${BACKEND_URL}/api${path}`, { headers });
+    const body = await response.text();
+    if (response.status === 404) {
+        throw new Error(`Endpoint API tidak ditemukan: ${path}`);
+    }
+    let result = {};
+    try {
+        result = body ? JSON.parse(body) : {};
+    } catch {
+        throw new Error(
+            `Backend mengembalikan respons tidak valid untuk ${path}`,
+        );
+    }
+    if (!response.ok || !['success', 'sukses'].includes(result.status)) {
+        throw new Error(result.message || `Gagal memuat ${path}`);
+    }
+    return result.data;
+};
+
+const loadData = async (key, path, fallback) => {
+    try {
+        data[key] = (await get(path)) || fallback;
+    } catch (error) {
+        console.error(`Gagal memuat ${path}:`, error);
+        apiError =
+            'Sebagian endpoint admin belum tersedia. Data yang tersedia tetap ditampilkan.';
+    }
+};
+
+await Promise.all([
+    loadData('dashboard', '/admin/dashboard', empty.dashboard),
+    loadData('categories', '/kategori', empty.categories),
+    loadData('products', '/produk', empty.products),
+    loadData(
+        'report',
+        `/admin/laporan?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+        empty.report,
+    ),
+]);
+
+data.categories = Array.isArray(data.categories) ? data.categories : [];
+data.products = Array.isArray(data.products) ? data.products : [];
+if (data.dashboard.stok_menipis == null) {
+    data.dashboard.stok_menipis = data.products.filter(
+        (product) => Number(product.stok) > 0 && Number(product.stok) <= 5,
+    ).length;
+}
+
+const rupiah = (value) =>
+    new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        minimumFractionDigits: 0,
+    }).format(Number(value || 0));
+const dateText = (value) =>
+    value
+        ? new Date(`${String(value).slice(0, 10)}T00:00:00`).toLocaleDateString(
+              'id-ID',
+          )
+        : '-';
+const getStockStatus = (value) => {
+    const stock = Number(value) || 0;
+    if (stock === 0) return { label: 'Habis', badge: 'bg-danger' };
+    if (stock <= 5) {
+        return { label: 'Menipis', badge: 'bg-warning text-dark' };
+    }
+    return { label: 'Tersedia', badge: 'bg-success' };
+};
+---
+
+<!doctype html>
+<html lang='id'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta
+            name='viewport'
+            content='width=device-width, initial-scale=1.0'
+        />
+        <title>Dashboard Admin - Dapur Ina Aina</title>
+        <link
+            href='/css/bootstrap.min.css'
+            rel='stylesheet'
+        />
+        <link
+            rel='stylesheet'
+            href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css'
+        />
+        <style>
+            :root {
+                --admin-red: #dc3545;
+                --admin-bg: #f5f5f5;
+            }
+            body {
+                background: var(--admin-bg);
+                color: #1f1f1f;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                overflow-x: hidden;
+            }
+            .sidebar {
+                width: 250px;
+                height: 100vh;
+                position: fixed;
+                inset: 0 auto 0 0;
+                z-index: 1040;
+                display: flex;
+                flex-direction: column;
+                color: #fff;
+                background: #212529;
+                transition: transform 0.25s ease;
+            }
+            .sidebar-brand {
+                padding: 20px;
+                border-bottom: 1px solid #ffffff1a;
+                font-size: 1.15rem;
+                font-weight: 700;
+                text-align: center;
+            }
+            .sidebar-nav {
+                flex-grow: 1;
+                padding: 20px 0;
+            }
+            .nav-item-admin {
+                display: flex;
+                align-items: center;
+                padding: 12px 20px;
+                color: #adb5bd;
+                text-decoration: none;
+                cursor: pointer;
+            }
+            .nav-item-admin:hover,
+            .nav-item-admin.active {
+                color: #fff;
+                background: var(--admin-red);
+                border-left: 4px solid #fff;
+            }
+            .nav-item-admin i {
+                width: 24px;
+                margin-right: 12px;
+                font-size: 1.15rem;
+            }
+            .main-content {
+                min-height: 100vh;
+                margin-left: 250px;
+                padding: 20px;
+            }
+            .top-navbar,
+            .card-custom {
+                border: 0;
+                border-radius: 14px;
+                box-shadow: 0 8px 24px #0000000a;
+            }
+            .admin-section {
+                display: none;
+            }
+            .admin-section.active {
+                display: block;
+                animation: fade-in 0.25s ease;
+            }
+            @keyframes fade-in {
+                from {
+                    opacity: 0;
+                    transform: translateY(8px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            .table-responsive {
+                border-radius: 10px;
+            }
+            .form-switch .form-check-input {
+                width: 3em;
+                height: 1.5em;
+                cursor: pointer;
+            }
+            .form-switch .form-check-input:checked {
+                background-color: #198754;
+                border-color: #198754;
+            }
+            .sidebar-backdrop {
+                display: none;
+            }
+            @media (max-width: 768px) {
+                .sidebar {
+                    transform: translateX(-100%);
+                }
+                .sidebar.show {
+                    transform: translateX(0);
+                }
+                .main-content {
+                    margin-left: 0;
+                    padding: 12px;
+                }
+                .sidebar-backdrop {
+                    position: fixed;
+                    inset: 0;
+                    z-index: 1030;
+                    background: #00000080;
+                }
+                .sidebar-backdrop.show {
+                    display: block;
+                }
+            }
+            @media print {
+                .sidebar,
+                .top-navbar,
+                .btn-print,
+                .sidebar-backdrop {
+                    display: none !important;
+                }
+                .main-content {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                body {
+                    background: #fff;
+                }
+                .card-custom {
+                    box-shadow: none;
+                    border: 1px solid #ddd;
+                }
+                #sec-laporan {
+                    display: block !important;
+                }
+                #sec-dashboard,
+                #sec-kategori,
+                #sec-produk,
+                #sec-stok {
+                    display: none !important;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div
+            class='sidebar-backdrop'
+            id='sidebarBackdrop'
+        >
+        </div>
+        <aside
+            class='sidebar'
+            id='sidebar'
+        >
+            <div class='sidebar-brand'>
+                <i class='bi bi-shop me-2 text-danger'></i>Dapur Ina Aina
+            </div>
+            <nav class='sidebar-nav'>
+                <div class='small text-uppercase text-muted px-3 mb-2 fw-bold'>
+                    Menu Utama
+                </div>
+                <a
+                    href='#sec-dashboard'
+                    class='nav-item-admin active'
+                    data-section='sec-dashboard'
+                    ><i class='bi bi-speedometer2'></i>Dashboard</a
+                >
+                <div
+                    class='small text-uppercase text-muted px-3 mb-2 mt-4 fw-bold'
+                >
+                    Manajemen Data
+                </div>
+                <a
+                    href='#sec-kategori'
+                    class='nav-item-admin'
+                    data-section='sec-kategori'
+                    ><i class='bi bi-tags'></i>Data Kategori</a
+                >
+                <a
+                    href='#sec-produk'
+                    class='nav-item-admin'
+                    data-section='sec-produk'
+                    ><i class='bi bi-box-seam'></i>Data Produk</a
+                >
+                <a
+                    href='#sec-stok'
+                    class='nav-item-admin'
+                    data-section='sec-stok'
+                    ><i class='bi bi-clipboard2-check'></i>Kelola Stok</a
+                >
+                <div
+                    class='small text-uppercase text-muted px-3 mb-2 mt-4 fw-bold'
+                >
+                    Laporan
+                </div>
+                <a
+                    href='#sec-laporan'
+                    class='nav-item-admin'
+                    data-section='sec-laporan'
+                    ><i class='bi bi-printer'></i>Laporan Penjualan</a
+                >
+            </nav>
+            <div class='p-3 border-top border-secondary'>
+                <a
+                    href='/admin/logout'
+                    class='btn btn-outline-light w-100'
+                    ><i class='bi bi-box-arrow-left me-2'></i>Logout</a
+                >
+            </div>
+        </aside>
+
+        <main class='main-content'>
+            <header
+                class='top-navbar bg-white p-3 mb-4 d-flex justify-content-between align-items-center'
+            >
+                <button
+                    class='btn btn-light d-md-none'
+                    id='menuButton'
+                    type='button'
+                    aria-label='Buka menu'
+                    ><i class='bi bi-list fs-4'></i></button
+                >
+                <h1 class='h5 mb-0 fw-bold d-none d-md-block text-secondary'>
+                    Panel Administrator
+                </h1>
+                <span class='fw-medium'
+                    ><i class='bi bi-person-circle me-1'></i>Admin Utama</span
+                >
+            </header>
+
+            <section
+                id='sec-dashboard'
+                class='admin-section active'
+            >
+                {
+                    apiError && (
+                        <div class='alert alert-warning border-0 shadow-sm'>
+                            <i class='bi bi-exclamation-triangle me-2' />
+                            {apiError}
+                        </div>
+                    )
+                }
+                <h2 class='h4 fw-bold mb-4'>Ringkasan Hari Ini</h2>
+                <div class='row g-4 mb-4'>
+                    <div class='col-md-4'>
+                        <div
+                            class='card card-custom p-4 bg-primary text-white h-100'
+                        >
+                            <div
+                                class='d-flex justify-content-between align-items-center'
+                            >
+                                <div>
+                                    <h3 class='h6 text-white-50'>
+                                        Total Pendapatan
+                                    </h3><p class='h3 fw-bold mb-0'>
+                                        {
+                                            data.dashboard.total_pendapatan ==
+                                            null
+                                                ? 'Belum tersedia'
+                                                : rupiah(
+                                                      data.dashboard
+                                                          .total_pendapatan,
+                                                  )
+                                        }
+                                    </p>
+                                </div><i class='bi bi-wallet2 fs-1 opacity-50'
+                                ></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class='col-md-4'>
+                        <div
+                            class='card card-custom p-4 bg-success text-white h-100'
+                        >
+                            <div
+                                class='d-flex justify-content-between align-items-center'
+                            >
+                                <div>
+                                    <h3 class='h6 text-white-50'>
+                                        Pesanan Selesai
+                                    </h3><p class='h3 fw-bold mb-0'>
+                                        {
+                                            data.dashboard.total_pesanan == null
+                                                ? 'Belum tersedia'
+                                                : `${data.dashboard.total_pesanan} Transaksi`
+                                        }
+                                    </p>
+                                </div><i class='bi bi-bag-check fs-1 opacity-50'
+                                ></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class='col-md-4'>
+                        <div
+                            class='card card-custom p-4 bg-warning text-dark h-100'
+                        >
+                            <div
+                                class='d-flex justify-content-between align-items-center'
+                            >
+                                <div>
+                                    <h3 class='h6 mb-1'>Stok Menipis</h3><p
+                                        class='h3 fw-bold mb-0'
+                                    >
+                                        {data.dashboard.stok_menipis || 0} Produk
+                                    </p>
+                                </div><i
+                                    class='bi bi-exclamation-triangle fs-1 opacity-50'
+                                ></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class='alert alert-info border-0 shadow-sm'>
+                    <i class='bi bi-info-circle-fill me-2'></i>Selamat datang di
+                    Panel Admin. Gunakan menu di samping untuk mengelola data
+                    restoran Anda.
+                </div>
+            </section>
+
+            <section
+                id='sec-kategori'
+                class='admin-section'
+            >
+                <div
+                    class='d-flex justify-content-between align-items-center mb-4 gap-3'
+                >
+                    <h2 class='h4 fw-bold mb-0'>Manajemen Kategori</h2><button
+                        class='btn btn-danger rounded-pill px-4'
+                        data-bs-toggle='modal'
+                        data-bs-target='#categoryModal'
+                        ><i class='bi bi-plus-lg me-1'></i>Tambah Kategori</button
+                    >
+                </div>
+                <div class='card card-custom p-3'>
+                    <div class='table-responsive'>
+                        <table class='table table-hover align-middle mb-0'>
+                            <thead class='table-light'
+                                ><tr
+                                    ><th>ID</th><th>Nama Kategori</th><th
+                                        class='text-center'>Aksi</th
+                                    ></tr
+                                ></thead
+                            ><tbody id='categoryRows'>
+                                {
+                                    data.categories.length ? (
+                                        data.categories.map((category) => (
+                                            <tr>
+                                                <>
+                                                    <td>{category.id}</td>
+                                                    <td class='fw-bold'>
+                                                        {category.nama_kategori}
+                                                    </td>
+                                                    <td class='text-center'>
+                                                        <>
+                                                            <button
+                                                                class='btn btn-sm btn-outline-primary me-1 edit-category'
+                                                                data-id={
+                                                                    category.id
+                                                                }
+                                                                data-name={
+                                                                    category.nama_kategori
+                                                                }
+                                                                aria-label='Edit kategori'
+                                                            >
+                                                                <i class='bi bi-pencil' />
+                                                            </button>
+                                                            <button
+                                                                class='btn btn-sm btn-outline-danger delete-category'
+                                                                data-id={
+                                                                    category.id
+                                                                }
+                                                                aria-label='Hapus kategori'
+                                                            >
+                                                                <i class='bi bi-trash' />
+                                                            </button>
+                                                        </>
+                                                    </td>
+                                                </>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td
+                                                colspan='3'
+                                                class='text-center text-muted py-4'
+                                            >
+                                                Belum ada kategori.
+                                            </td>
+                                        </tr>
+                                    )
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section
+                id='sec-produk'
+                class='admin-section'
+            >
+                <div
+                    class='d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3'
+                >
+                    <h2 class='h4 fw-bold mb-0'>Katalog Produk Menu</h2><div
+                        class='d-flex gap-2'
+                    >
+                        <input
+                            id='productSearch'
+                            type='search'
+                            class='form-control rounded-pill'
+                            placeholder='Cari nama produk...'
+                            aria-label='Cari produk'
+                        /><button
+                            class='btn btn-danger rounded-pill px-4 text-nowrap'
+                            data-bs-toggle='modal'
+                            data-bs-target='#productModal'
+                            ><i class='bi bi-plus-lg me-1'></i>Tambah Produk</button
+                        >
+                    </div>
+                </div>
+                <div class='card card-custom p-3'>
+                    <div class='table-responsive'>
+                        <table class='table table-hover align-middle mb-0'>
+                            <thead class='table-light'
+                                ><tr
+                                    ><th>ID</th><th>Nama Produk</th><th
+                                        >Kategori</th
+                                    ><th class='text-end'>Harga (Rp)</th><th
+                                        class='text-center'>Aksi</th
+                                    ></tr
+                                ></thead
+                            ><tbody id='productRows'>
+                                {
+                                    data.products.length ? (
+                                        data.products.map((product) => (
+                                            <tr>
+                                                <>
+                                                    <td class='text-muted'>
+                                                        PRD-{product.id}
+                                                    </td>
+                                                    <td class='fw-bold product-name'>
+                                                        {product.nama_produk}
+                                                    </td>
+                                                    <td>
+                                                        <span class='badge bg-secondary'>
+                                                            {product.nama_kategori ||
+                                                                `Kategori ${product.id_kategori}`}
+                                                        </span>
+                                                    </td>
+                                                    <td class='text-end'>
+                                                        {rupiah(product.harga)}
+                                                    </td>
+                                                    <td class='text-center'>
+                                                        <>
+                                                            <button
+                                                                class='btn btn-sm btn-outline-primary me-1 edit-product'
+                                                                data-id={
+                                                                    product.id
+                                                                }
+                                                                data-name={
+                                                                    product.nama_produk
+                                                                }
+                                                                data-category={
+                                                                    product.id_kategori
+                                                                }
+                                                                data-price={
+                                                                    product.harga
+                                                                }
+                                                                aria-label='Edit produk'
+                                                            >
+                                                                <i class='bi bi-pencil' />
+                                                            </button>
+                                                            <button
+                                                                class='btn btn-sm btn-outline-danger delete-product'
+                                                                data-id={
+                                                                    product.id
+                                                                }
+                                                                aria-label='Hapus produk'
+                                                            >
+                                                                <i class='bi bi-trash' />
+                                                            </button>
+                                                        </>
+                                                    </td>
+                                                </>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td
+                                                colspan='5'
+                                                class='text-center text-muted py-4'
+                                            >
+                                                Belum ada produk.
+                                            </td>
+                                        </tr>
+                                    )
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section
+                id='sec-stok'
+                class='admin-section'
+            >
+                <h2 class='h4 fw-bold mb-4'>
+                    Pengendalian Ketersediaan Stok
+                </h2><div class='alert alert-warning border-0 shadow-sm'>
+                    <i class='bi bi-exclamation-triangle-fill me-2'></i>Atur
+                    jumlah stok produk, lalu simpan perubahan untuk memperbarui
+                    ketersediaan pada halaman pemesanan.
+                </div>
+                <div class='card card-custom p-3'>
+                    <div class='table-responsive'>
+                        <table class='table table-hover align-middle mb-0'>
+                            <thead class='table-light'
+                                ><tr
+                                    ><th>Nama Produk</th><th>Kategori</th><th
+                                        class='text-center'>Status Saat Ini</th
+                                    ><th class='text-center'>Jumlah Stok</th
+                                    ></tr
+                                ></thead
+                            ><tbody id='stockRows'>
+                                {
+                                    data.products.length ? (
+                                        data.products.map((product) => {
+                                            const stock =
+                                                Number(product.stok) || 0;
+                                            const stockStatus =
+                                                getStockStatus(stock);
+                                            return (
+                                                <tr>
+                                                    <>
+                                                        <td
+                                                            class:list={[
+                                                                'fw-bold',
+                                                                'stock-name',
+                                                                stock === 0 &&
+                                                                    'text-decoration-line-through text-muted',
+                                                            ]}
+                                                        >
+                                                            {
+                                                                product.nama_produk
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            <span class='badge bg-secondary'>
+                                                                {product.nama_kategori ||
+                                                                    `Kategori ${product.id_kategori}`}
+                                                            </span>
+                                                        </td>
+                                                        <td class='text-center'>
+                                                            <span
+                                                                class:list={[
+                                                                    'badge',
+                                                                    'px-3',
+                                                                    'py-2',
+                                                                    stockStatus.badge,
+                                                                    'stock-badge',
+                                                                ]}
+                                                            >
+                                                                {
+                                                                    stockStatus.label
+                                                                }
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <div class='input-group input-group-sm stock-editor'>
+                                                                <input
+                                                                    class='form-control stock-input'
+                                                                    type='number'
+                                                                    min='0'
+                                                                    step='1'
+                                                                    value={
+                                                                        product.stok ??
+                                                                        0
+                                                                    }
+                                                                    data-id={
+                                                                        product.id
+                                                                    }
+                                                                    aria-label={`Jumlah stok ${product.nama_produk}`}
+                                                                />
+                                                                <button
+                                                                    class='btn btn-outline-primary save-stock'
+                                                                    type='button'
+                                                                    data-id={
+                                                                        product.id
+                                                                    }
+                                                                    aria-label={`Simpan stok ${product.nama_produk}`}
+                                                                >
+                                                                    <i class='bi bi-save' />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </>
+                                                </tr>
+                                            );
+                                        })
+                                    ) : (
+                                        <tr>
+                                            <td
+                                                colspan='4'
+                                                class='text-center text-muted py-4'
+                                            >
+                                                Belum ada produk.
+                                            </td>
+                                        </tr>
+                                    )
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section
+                id='sec-laporan'
+                class='admin-section'
+            >
+                <h2 class='h4 fw-bold mb-4'>Laporan Transaksi Penjualan</h2>
+                <div class='card card-custom p-4 mb-4 btn-print'>
+                    <form
+                        id='reportFilter'
+                        class='row g-3 align-items-end'
+                    >
+                        <div class='col-md-4'>
+                            <label
+                                for='startDate'
+                                class='form-label fw-bold text-secondary'
+                                >Periode Mulai</label
+                            ><input
+                                id='startDate'
+                                name='startDate'
+                                type='date'
+                                class='form-control'
+                                value={startDate}
+                            />
+                        </div><div class='col-md-4'>
+                            <label
+                                for='endDate'
+                                class='form-label fw-bold text-secondary'
+                                >Periode Akhir</label
+                            ><input
+                                id='endDate'
+                                name='endDate'
+                                type='date'
+                                class='form-control'
+                                value={endDate}
+                            />
+                        </div><div class='col-md-4'>
+                            <button
+                                class='btn btn-primary w-100 fw-bold'
+                                type='submit'
+                                ><i class='bi bi-funnel me-1'></i>Terapkan
+                                Filter</button
+                            >
+                        </div>
+                    </form>
+                </div>
+                <div class='card card-custom p-4'>
+                    <div
+                        class='d-flex justify-content-between align-items-center border-bottom pb-3 mb-3'
+                    >
+                        <div>
+                            <h3 class='h5 fw-bold mb-0 text-uppercase'>
+                                Laporan Rekapitulasi
+                            </h3><small class='text-muted'
+                                >Periode: {dateText(startDate)} - {
+                                    dateText(endDate)
+                                }</small
+                            >
+                        </div><button
+                            class='btn btn-outline-danger btn-print'
+                            id='printReport'
+                            type='button'
+                            ><i class='bi bi-printer-fill me-2'></i>Cetak
+                            Laporan</button
+                        >
+                    </div><div class='table-responsive'>
+                        <table class='table table-bordered align-middle'>
+                            <thead class='table-light'
+                                ><tr
+                                    ><th>Tanggal</th><th>No. Transaksi</th><th
+                                        >Pelanggan</th
+                                    ><th class='text-center'>Metode</th><th
+                                        class='text-end'>Total Pembayaran</th
+                                    ></tr
+                                ></thead
+                            ><tbody>
+                                {
+                                    data.report.list_penjualan?.map((item) => (
+                                        <tr>
+                                            <>
+                                                <td>
+                                                    {dateText(
+                                                        item.tanggal_pesanan,
+                                                    )}
+                                                </td>
+                                                <td>
+                                                    TRX-DIA-{item.id_pesanan}
+                                                </td>
+                                                <td>{item.nama_pelanggan}</td>
+                                                <td class='text-center'>
+                                                    <span class='badge border border-primary text-primary'>
+                                                        {item.metode_pembayaran}
+                                                    </span>
+                                                </td>
+                                                <td class='text-end fw-medium'>
+                                                    {rupiah(
+                                                        item.total_pembayaran,
+                                                    )}
+                                                </td>
+                                            </>
+                                        </tr>
+                                    ))
+                                }
+                                <tr class='table-light fw-bold fs-5'
+                                    ><td
+                                        colspan='4'
+                                        class='text-end text-uppercase'
+                                        >Total Pendapatan:</td
+                                    ><td class='text-end text-danger'
+                                        >{
+                                            rupiah(
+                                                data.report.total_keseluruhan,
+                                            )
+                                        }</td
+                                    ></tr
+                                >
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <div
+            class='modal fade'
+            id='categoryModal'
+            tabindex='-1'
+            aria-hidden='true'
+        >
+            <div class='modal-dialog modal-dialog-centered'>
+                <form
+                    class='modal-content border-0 rounded-4 shadow'
+                    id='categoryForm'
+                >
+                    <div class='modal-header bg-light'>
+                        <h2 class='h5 modal-title fw-bold'>
+                            <i class='bi bi-tag me-2 text-danger'></i>Tambah
+                            Kategori Baru
+                        </h2><button
+                            type='button'
+                            class='btn-close'
+                            data-bs-dismiss='modal'
+                            aria-label='Tutup'
+                        ></button>
+                    </div><div class='modal-body p-4'>
+                        <label
+                            for='categoryName'
+                            class='form-label fw-bold'
+                            >Nama Kategori</label
+                        ><input
+                            id='categoryName'
+                            class='form-control'
+                            required
+                        />
+                    </div><div class='modal-footer border-0 pb-4 px-4'>
+                        <button
+                            type='button'
+                            class='btn btn-light rounded-pill px-4'
+                            data-bs-dismiss='modal'
+                            >Batal</button
+                        ><button
+                            class='btn btn-danger rounded-pill px-4'
+                            type='submit'
+                            >Simpan Kategori</button
+                        >
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div
+            class='modal fade'
+            id='productModal'
+            tabindex='-1'
+            aria-hidden='true'
+        >
+            <div class='modal-dialog modal-dialog-centered'>
+                <form
+                    class='modal-content border-0 rounded-4 shadow'
+                    id='productForm'
+                >
+                    <div class='modal-header bg-light'>
+                        <h2 class='h5 modal-title fw-bold'>
+                            <i class='bi bi-box-seam me-2 text-danger'
+                            ></i>Tambah Data Produk
+                        </h2><button
+                            type='button'
+                            class='btn-close'
+                            data-bs-dismiss='modal'
+                            aria-label='Tutup'
+                        ></button>
+                    </div><div class='modal-body p-4'>
+                        <div class='mb-3'>
+                            <label
+                                for='productName'
+                                class='form-label fw-bold'
+                                >Nama Produk</label
+                            ><input
+                                id='productName'
+                                class='form-control'
+                                required
+                            />
+                        </div><div class='row g-3'>
+                            <div class='col-6'>
+                                <label
+                                    for='productCategory'
+                                    class='form-label fw-bold'
+                                    >Kategori</label
+                                ><select
+                                    id='productCategory'
+                                    class='form-select'
+                                    required
+                                    >{
+                                        data.categories.map((category) => (
+                                            <option value={category.id}>
+                                                {category.nama_kategori}
+                                            </option>
+                                        ))
+                                    }</select
+                                >
+                            </div><div class='col-6'>
+                                <label
+                                    for='productPrice'
+                                    class='form-label fw-bold'
+                                    >Harga (Rp)</label
+                                ><input
+                                    id='productPrice'
+                                    type='number'
+                                    min='0'
+                                    class='form-control'
+                                    required
+                                />
+                            </div><div class='col-6'>
+                                <label
+                                    for='productStock'
+                                    class='form-label fw-bold'
+                                    >Stok Awal</label
+                                ><input
+                                    id='productStock'
+                                    type='number'
+                                    min='0'
+                                    class='form-control'
+                                    required
+                                />
+                            </div>
+                        </div>
+                    </div><div class='modal-footer border-0 pb-4 px-4'>
+                        <button
+                            type='button'
+                            class='btn btn-light rounded-pill px-4'
+                            data-bs-dismiss='modal'
+                            >Batal</button
+                        ><button
+                            class='btn btn-danger rounded-pill px-4'
+                            type='submit'
+                            >Simpan Produk</button
+                        >
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <script
+            src='/js/bootstrap.bundle.min.js'
+            is:inline
+        ></script>
+        <script is:inline data-api-base={BACKEND_URL} data-admin-token={token}>
+            const scriptConfig = document.currentScript;
+            const apiBase = `${scriptConfig.dataset.apiBase}/api`;
+            const adminToken = scriptConfig.dataset.adminToken;
+            const requestJson = async (path, options = {}) => {
+                const response = await fetch(`${apiBase}${path}`, {
+                    ...options,
+                    headers: {
+                        Authorization: `Bearer ${adminToken}`,
+                        'Content-Type': 'application/json',
+                        ...(options.headers || {}),
+                    },
+                });
+                const body = await response.text();
+                let result = {};
+                if (response.status === 404) {
+                    throw new Error(
+                        `Endpoint API tidak ditemukan (${path}). Route backend admin belum terpasang.`,
+                    );
+                }
+                try {
+                    result = body ? JSON.parse(body) : {};
+                } catch {
+                    throw new Error(
+                        'Backend mengembalikan respons yang tidak valid.',
+                    );
+                }
+                if (
+                    !response.ok ||
+                    !['success', 'sukses'].includes(result.status)
+                )
+                    throw new Error(
+                        result.message || 'Permintaan ke backend gagal.',
+                    );
+                return result.data;
+            };
+            const mutate = async (path, options) => {
+                await requestJson(path, options);
+                window.location.reload();
+            };
+            const error = (reason) =>
+                window.alert(reason.message || 'Terjadi kesalahan.');
+            const sidebar = document.querySelector('#sidebar');
+            const backdrop = document.querySelector('#sidebarBackdrop');
+            const closeSidebar = () => {
+                sidebar?.classList.remove('show');
+                backdrop?.classList.remove('show');
+            };
+            const setActiveSection = (sectionId, updateUrl = true) => {
+                const section = document.querySelector(`#${sectionId}`);
+                const link = document.querySelector(
+                    `.nav-item-admin[data-section="${sectionId}"]`,
+                );
+                if (!section || !link) return;
+
+                document
+                    .querySelectorAll('.nav-item-admin')
+                    .forEach((item) => item.classList.remove('active'));
+                link.classList.add('active');
+                document
+                    .querySelectorAll('.admin-section')
+                    .forEach((item) => item.classList.remove('active'));
+                section.classList.add('active');
+
+                if (updateUrl) {
+                    window.history.replaceState(
+                        null,
+                        '',
+                        `${window.location.pathname}${window.location.search}#${sectionId}`,
+                    );
+                }
+            };
+            document
+                .querySelector('#menuButton')
+                ?.addEventListener('click', () => {
+                    sidebar?.classList.toggle('show');
+                    backdrop?.classList.toggle('show');
+                });
+            backdrop?.addEventListener('click', closeSidebar);
+            document.querySelectorAll('.nav-item-admin').forEach((link) =>
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    setActiveSection(link.dataset.section);
+                    closeSidebar();
+                }),
+            );
+            const initialSection = window.location.hash.slice(1);
+            setActiveSection(initialSection || 'sec-dashboard', false);
+            window.addEventListener('hashchange', () => {
+                setActiveSection(
+                    window.location.hash.slice(1) || 'sec-dashboard',
+                    false,
+                );
+            });
+            document.querySelectorAll('.delete-category').forEach((button) =>
+                button.addEventListener('click', () => {
+                    if (confirm('Hapus kategori ini?'))
+                        mutate(`/admin/kategori/${button.dataset.id}`, {
+                            method: 'DELETE',
+                        }).catch(error);
+                }),
+            );
+            document.querySelectorAll('.edit-category').forEach((button) =>
+                button.addEventListener('click', () => {
+                    const name = prompt(
+                        'Nama kategori baru:',
+                        button.dataset.name,
+                    );
+                    if (name?.trim())
+                        mutate(`/admin/kategori/${button.dataset.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                nama_kategori: name.trim(),
+                            }),
+                        }).catch(error);
+                }),
+            );
+            document.querySelectorAll('.delete-product').forEach((button) =>
+                button.addEventListener('click', () => {
+                    if (confirm('Hapus produk ini?'))
+                        mutate(`/admin/produk/${button.dataset.id}`, {
+                            method: 'DELETE',
+                        }).catch(error);
+                }),
+            );
+            document.querySelectorAll('.edit-product').forEach((button) =>
+                button.addEventListener('click', () => {
+                    const name = prompt(
+                        'Nama produk baru:',
+                        button.dataset.name,
+                    );
+                    if (!name?.trim()) return;
+                    const price = prompt('Harga produk:', button.dataset.price);
+                    if (price)
+                        mutate(`/admin/produk/${button.dataset.id}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                id_kategori: Number(button.dataset.category),
+                                nama_produk: name.trim(),
+                                harga: Number(price),
+                            }),
+                        }).catch(error);
+                }),
+            );
+            document.querySelectorAll('.save-stock').forEach((button) =>
+                button.addEventListener('click', () => {
+                    const input = button
+                        .closest('.stock-editor')
+                        ?.querySelector('.stock-input');
+                    const stock = Number(input?.value);
+                    if (!Number.isInteger(stock) || stock < 0) {
+                        window.alert(
+                            'Jumlah stok harus berupa angka bulat 0 atau lebih.',
+                        );
+                        return;
+                    }
+                    mutate(`/admin/produk/${button.dataset.id}/stok`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ stok: stock }),
+                    }).catch(error);
+                }),
+            );
+            document
+                .querySelector('#categoryForm')
+                ?.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    const name = document
+                        .querySelector('#categoryName')
+                        .value.trim();
+                    if (name)
+                        mutate('/admin/kategori', {
+                            method: 'POST',
+                            body: JSON.stringify({ nama_kategori: name }),
+                        }).catch(error);
+                });
+            document
+                .querySelector('#productForm')
+                ?.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    const body = {
+                        id_kategori: Number(
+                            document.querySelector('#productCategory').value,
+                        ),
+                        nama_produk: document
+                            .querySelector('#productName')
+                            .value.trim(),
+                        harga: Number(
+                            document.querySelector('#productPrice').value,
+                        ),
+                        stok: Number(
+                            document.querySelector('#productStock').value,
+                        ),
+                    };
+                    if (
+                        body.nama_produk &&
+                        body.id_kategori &&
+                        body.harga >= 0 &&
+                        body.stok >= 0
+                    )
+                        mutate('/admin/produk', {
+                            method: 'POST',
+                            body: JSON.stringify(body),
+                        }).catch(error);
+                });
+            document
+                .querySelector('#productSearch')
+                ?.addEventListener('input', (event) => {
+                    const query = event.target.value.toLowerCase();
+                    document
+                        .querySelectorAll('#productRows tr')
+                        .forEach((row) => {
+                            row.hidden = !row
+                                .querySelector('.product-name')
+                                ?.textContent.toLowerCase()
+                                .includes(query);
+                        });
+                });
+            document
+                .querySelector('#reportFilter')
+                ?.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    const url = new URL(location.href);
+                    url.searchParams.set(
+                        'startDate',
+                        document.querySelector('#startDate').value,
+                    );
+                    url.searchParams.set(
+                        'endDate',
+                        document.querySelector('#endDate').value,
+                    );
+                    location.href = url.toString();
+                });
+            document
+                .querySelector('#printReport')
+                ?.addEventListener('click', () => window.print());
+        </script>
+    </body>
+</html>

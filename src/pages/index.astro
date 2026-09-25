@@ -1,17 +1,963 @@
 ---
+// @ts-nocheck
+import Navbar from '../components/Navbar.astro';
+const BACKEND_URL = import.meta.env.BACKEND_URL || 'http://localhost:3000';
+const productImages = [
+    'https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=400&q=80',
+    'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=400&q=80',
+    'https://images.unsplash.com/photo-1626844131082-256783844137?auto=format&fit=crop&w=400&q=80',
+    'https://images.unsplash.com/photo-1603569283847-aa295f0d016a?auto=format&fit=crop&w=400&q=80',
+    'https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=400&q=80',
+    'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=400&q=80',
+];
 
+// fungsi untuk mendata untuk variable data-category agar bisa menjalankan fungsi filter kategori produk
+/** @param {string} category */
+const categorySlug = (category) => category.toLowerCase().replaceAll(' ', '-');
+
+// Pengambilan data dari backend (database)
+/** @param {string} path */
+const fetchData = async (path) => {
+    const response = await fetch(`${BACKEND_URL}${path}`);
+    if (!response.ok) {
+        throw new Error(`Backend mengembalikan status ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result.status === 'success' ? result.data : [];
+};
+
+// fungsi @type ini adalah untuk menghilangkan tampilan error pada typescript
+/** @type {Array<{id: number, nama_kategori: string}>} */
+let categories = [];
+/** @type {Array<{id: number, id_kategori: number, nama_produk: string, harga: number, stok: number, nama_kategori: string}>} */
+let products = [];
+let apiError = '';
+let initialCart = [];
+
+if (Astro.request.method === 'POST') {
+    const formData = await Astro.request.formData();
+    const cartData = formData.get('cart_data');
+
+    if (typeof cartData === 'string') {
+        try {
+            const parsedCart = JSON.parse(cartData);
+            if (Array.isArray(parsedCart)) {
+                initialCart = parsedCart;
+            }
+        } catch (error) {
+            console.error('Cart dari checkout tidak valid:', error);
+        }
+    }
+}
+
+try {
+    [categories, products] = await Promise.all([
+        fetchData('/api/kategori'), // data categories
+        fetchData('/api/produk'), // data products
+    ]);
+} catch (error) {
+    apiError =
+        'Menu belum dapat dimuat. Pastikan backend berjalan di port 3000.';
+    console.error(error);
+}
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+<!doctype html>
+<html lang='id'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta
+            name='viewport'
+            content='width=device-width, initial-scale=1.0'
+        />
+        <title>Dapur Ina Aina - Pesan Menu</title>
+        <!-- Bootstrap 5 CSS -->
+        <link
+            href='/css/bootstrap.min.css'
+            rel='stylesheet'
+        />
+        <!-- Bootstrap Icons -->
+        <link
+            rel='stylesheet'
+            href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css'
+        />
+        <style>
+            body {
+                background-color: #f8f9fa;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            }
+            /* Styling untuk Card Produk */
+            .product-card {
+                transition:
+                    transform 0.2s ease,
+                    box-shadow 0.2s ease;
+                border-radius: 15px;
+                overflow: hidden;
+            }
+            .product-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1) !important;
+            }
+            .product-img {
+                height: 180px;
+                object-fit: cover;
+            }
+            .product-img.out-of-stock {
+                filter: grayscale(100%);
+            }
+            .out-of-stock-button,
+            .out-of-stock-button:hover,
+            .out-of-stock-button:disabled {
+                background-color: #495057;
+                border-color: #495057;
+                color: #fff;
+                opacity: 1;
+            }
+            /* Cart Badge Animasi */
+            .cart-badge {
+                transition: transform 0.2s;
+            }
+            .cart-bump {
+                transform: scale(1.3);
+            }
+            /* Custom Scrollbar untuk Cart Panel */
+            .offcanvas-body::-webkit-scrollbar {
+                width: 6px;
+            }
+            .offcanvas-body::-webkit-scrollbar-thumb {
+                background-color: #ccc;
+                border-radius: 10px;
+            }
+            /* Tombol Kategori */
+            .nav-pills .nav-link {
+                color: #495057;
+                font-weight: 500;
+                white-space: nowrap; /* Mencegah teks turun ke bawah pada mobile */
+            }
+            .nav-pills .nav-link.active {
+                background-color: #dc3545;
+                box-shadow: 0 4px 10px rgba(220, 53, 69, 0.3);
+            }
+
+            /* Mobile Specific Tweaks (Optimasi Sentuhan Jari) */
+            button,
+            a {
+                touch-action: manipulation; /* Mencegah delay double-tap zoom di mobile */
+            }
+            .filter-scroll {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch; /* Efek scroll licin ala iOS */
+                scrollbar-width: none; /* Sembunyikan scrollbar di Firefox */
+                -ms-overflow-style: none; /* Sembunyikan di IE dan Edge */
+                padding-bottom: 5px;
+            }
+            .filter-scroll::-webkit-scrollbar {
+                display: none; /* Sembunyikan scrollbar di Chrome/Safari */
+            }
+
+            /* Tombol plus minus cart yg touch-friendly */
+            .qty-btn {
+                width: 36px;
+                height: 36px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                background-color: #fff;
+                border: 1px solid #dee2e6;
+                color: #212529;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            }
+            .qty-btn:active {
+                background-color: #e9ecef;
+            }
+
+            /* Ukuran font & layout responsif untuk mobile */
+            @media (max-width: 576px) {
+                .product-img {
+                    height: 130px; /* Gambar lebih proporsional di HP */
+                }
+                .card-title {
+                    font-size: 0.9rem;
+                }
+                .price-text {
+                    font-size: 1rem !important;
+                }
+                .offcanvas {
+                    width: 100% !important; /* Cart full screen di layar HP kecil */
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <!-- Navbar (Sticky Top) -->
+        <Navbar variant='menu' />
+
+        <!-- Main Content: Full Screen Product Selection -->
+        <div class='container my-4 pb-5'>
+            <!-- Header & Filter Kategori -->
+            <div class='text-center mb-4'>
+                <h2 class='fw-bold mb-3 fs-3'>Menu Spesial Kami</h2>
+                <div class='filter-scroll'>
+                    <ul
+                        class='nav nav-pills justify-content-md-center gap-2 mb-2 flex-nowrap'
+                        id='pills-tab'
+                        role='tablist'
+                    >
+                        <li
+                            class='nav-item'
+                            role='presentation'
+                        >
+                            <button
+                                class='nav-link active rounded-pill px-4 filter-btn'
+                                data-category='semua'
+                                type='button'
+                                >Semua</button
+                            >
+                        </li>
+                        <!-- Mapping dari database untuk kategori -->
+                        {
+                            categories.map((category) => (
+                                <li
+                                    class='nav-item'
+                                    role='presentation'
+                                >
+                                    <button
+                                        class='nav-link rounded-pill px-4 bg-white border filter-btn'
+                                        data-category={categorySlug(
+                                            category.nama_kategori,
+                                        )}
+                                        type='button'
+                                    >
+                                        {category.nama_kategori}
+                                    </button>
+                                </li>
+                            ))
+                        }
+                    </ul>
+                </div>
+            </div>
+
+            {
+                apiError && (
+                    <div
+                        class='alert alert-warning text-center'
+                        role='alert'
+                    >
+                        {apiError}
+                    </div>
+                )
+            }
+
+            <!-- Grid Produk dari backend -->
+            <div
+                class='row g-3 g-md-4'
+                id='productGrid'
+            >
+                {
+                    products.map((product, index) => (
+                        <div
+                            class='col-6 col-md-4 col-lg-3 product-item'
+                            data-category={categorySlug(product.nama_kategori)}
+                        >
+                            <div class='card h-100 shadow-sm border-0 product-card'>
+                                <img
+                                    src={
+                                        productImages[
+                                            index % productImages.length
+                                        ]
+                                    }
+                                    class:list={[
+                                        'card-img-top',
+                                        'product-img',
+                                        product.stok <= 0 && 'out-of-stock',
+                                    ]}
+                                    alt={product.nama_produk}
+                                />
+                                <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                                    <span
+                                        class='badge bg-danger mb-2 align-self-start'
+                                        style='font-size: 0.7rem;'
+                                    >
+                                        {product.nama_kategori}
+                                    </span>
+                                    <h6 class='card-title fw-bold'>
+                                        {product.nama_produk}
+                                    </h6>
+                                    <p class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'>
+                                        {new Intl.NumberFormat('id-ID', {
+                                            style: 'currency',
+                                            currency: 'IDR',
+                                            minimumFractionDigits: 0,
+                                        }).format(product.harga)}
+                                    </p>
+                                    <button
+                                        onclick={`addToCart(${product.id}, ${JSON.stringify(product.nama_produk)}, ${product.harga})`}
+                                        class:list={[
+                                            'btn',
+                                            'w-100',
+                                            'fw-bold',
+                                            'rounded-pill',
+                                            'py-2',
+                                            product.stok <= 0
+                                                ? 'out-of-stock-button'
+                                                : 'btn-danger',
+                                        ]}
+                                        disabled={product.stok <= 0}
+                                    >
+                                        <i
+                                            class:list={[
+                                                'bi',
+                                                'me-1',
+                                                product.stok > 0
+                                                    ? 'bi-plus-circle'
+                                                    : 'bi-x-circle',
+                                            ]}
+                                        />
+                                        <span class='d-none d-sm-inline'>
+                                            {product.stok > 0
+                                                ? 'Tambah'
+                                                : 'Habis'}
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                }
+            </div>
+
+            <!-- Grid menu lama disembunyikan agar tidak menduplikasi data backend. -->
+            <div class='row g-3 g-md-4 d-none'>
+                <!-- Makanan 1 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='makanan'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Nasi Goreng Spesial'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-warning text-dark mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Makanan Utama</span
+                            >
+                            <h6 class='card-title fw-bold'>
+                                Nasi Goreng Spesial
+                            </h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 35.000
+                            </p>
+                            <!-- Panggilan JS addToCart -->
+                            <button
+                                onclick="addToCart(1, 'Nasi Goreng Spesial', 35000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Makanan 2 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='makanan'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Ayam Bakar Madu'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-warning text-dark mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Makanan Utama</span
+                            >
+                            <h6 class='card-title fw-bold'>Ayam Bakar Madu</h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 45.000
+                            </p>
+                            <button
+                                onclick="addToCart(2, 'Ayam Bakar Madu', 45000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Appetizer 1 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='appetizer'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1626844131082-256783844137?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Tahu Crispy'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-success mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Appetizer</span
+                            >
+                            <h6 class='card-title fw-bold'>Tahu Crispy</h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 15.000
+                            </p>
+                            <button
+                                onclick="addToCart(3, 'Tahu Crispy', 15000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Appetizer 2 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='appetizer'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1603569283847-aa295f0d016a?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Lumpia Udang'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-success mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Appetizer</span
+                            >
+                            <h6 class='card-title fw-bold'>Lumpia Udang</h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 20.000
+                            </p>
+                            <button
+                                onclick="addToCart(4, 'Lumpia Udang', 20000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Minuman 1 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='minuman'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Es Teh Manis'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-info text-dark mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Minuman</span
+                            >
+                            <h6 class='card-title fw-bold'>Es Teh Manis</h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 8.000
+                            </p>
+                            <button
+                                onclick="addToCart(5, 'Es Teh Manis', 8000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Minuman 2 -->
+                <div
+                    class='col-6 col-md-4 col-lg-3 product-item'
+                    data-category='minuman'
+                >
+                    <div class='card h-100 shadow-sm border-0 product-card'>
+                        <img
+                            src='https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=400&q=80'
+                            class='card-img-top product-img'
+                            alt='Jus Jeruk Segar'
+                        />
+                        <div class='card-body p-2 p-md-3 d-flex flex-column'>
+                            <span
+                                class='badge bg-info text-dark mb-2 align-self-start'
+                                style='font-size: 0.7rem;'
+                                >Minuman</span
+                            >
+                            <h6 class='card-title fw-bold'>Jus Jeruk Segar</h6>
+                            <p
+                                class='card-text text-danger fw-bold fs-5 price-text mt-auto mb-3'
+                            >
+                                Rp 12.000
+                            </p>
+                            <button
+                                onclick="addToCart(6, 'Jus Jeruk Segar', 12000)"
+                                class='btn btn-danger w-100 fw-bold rounded-pill py-2'
+                            >
+                                <i class='bi bi-plus-circle me-1'></i>
+                                <span class='d-none d-sm-inline'>Tambah</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Offcanvas Cart Panel (Slide dari Kanan) -->
+        <div
+            class='offcanvas offcanvas-end'
+            tabindex='-1'
+            id='cartOffcanvas'
+            aria-labelledby='cartOffcanvasLabel'
+        >
+            <div class='offcanvas-header bg-danger text-white'>
+                <h5
+                    class='offcanvas-title fw-bold'
+                    id='cartOffcanvasLabel'
+                >
+                    <i class='bi bi-cart3 me-2'></i>Pesanan Saya
+                </h5>
+                <button
+                    type='button'
+                    class='btn-close btn-close-white'
+                    data-bs-dismiss='offcanvas'
+                    aria-label='Close'
+                ></button>
+            </div>
+
+            <div class='offcanvas-body d-flex flex-column p-0'>
+                <!-- State Kosong -->
+                <div
+                    id='emptyCartState'
+                    class='text-center p-5 mt-5'
+                >
+                    <i
+                        class='bi bi-basket text-muted'
+                        style='font-size: 4rem;'
+                    ></i>
+                    <h5 class='text-muted mt-3'>Belum ada pesanan</h5>
+                    <p class='text-muted small'>
+                        Silakan pilih menu favorit Anda terlebih dahulu.
+                    </p>
+                </div>
+
+                <!-- Daftar Item (Dinamic via JS) -->
+                <div
+                    id='cartItemsContainer'
+                    class='flex-grow-1 overflow-auto p-3 d-none'
+                >
+                    <ul
+                        class='list-group list-group-flush'
+                        id='cartList'
+                    >
+                        <!-- Item akan dirender di sini oleh JS -->
+                    </ul>
+                </div>
+
+                <!-- Footer Summary & Next Button -->
+                <div
+                    id='cartFooter'
+                    class='p-3 bg-light border-top d-none'
+                >
+                    <div class='d-flex justify-content-between mb-1'>
+                        <span class='text-muted'>Subtotal</span>
+                        <span
+                            class='fw-bold'
+                            id='subtotalLabel'
+                            >Rp 0</span
+                        >
+                    </div>
+                    <hr class='my-2' />
+                    <div class='d-flex justify-content-between mb-3'>
+                        <span class='fw-bold fs-5'>Total Bayar</span>
+                        <span
+                            class='fw-bold fs-5 text-danger'
+                            id='totalLabel'
+                            >Rp 0</span
+                        >
+                    </div>
+
+                    <!-- Keranjang dikirim ke halaman checkout melalui POST. -->
+                    <form
+                        action='/checkout'
+                        method='POST'
+                        id='checkoutForm'
+                    >
+                        <input
+                            type='hidden'
+                            name='cart_data'
+                            id='cartDataInput'
+                            value='[]'
+                        />
+                        <button
+                            type='submit'
+                            class='btn btn-danger w-100 fw-bold py-2 rounded-pill'
+                        >
+                            Lanjut Konfirmasi
+                            <i class='bi bi-arrow-right ms-1'></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Checkout (Konfirmasi Data Pelanggan) -->
+        <div
+            class='modal fade'
+            id='checkoutModal'
+            tabindex='-1'
+            aria-labelledby='checkoutModalLabel'
+            aria-hidden='true'
+        >
+            <div class='modal-dialog modal-dialog-centered'>
+                <div class='modal-content border-0 shadow'>
+                    <div class='modal-header bg-light'>
+                        <h5
+                            class='modal-title fw-bold'
+                            id='checkoutModalLabel'
+                        >
+                            Konfirmasi & Pembayaran
+                        </h5>
+                        <button
+                            type='button'
+                            class='btn-close'
+                            data-bs-dismiss='modal'
+                            aria-label='Close'
+                        ></button>
+                    </div>
+                    <div class='modal-body'>
+                        <!-- Form Data Pelanggan -->
+                        <h6 class='fw-bold mb-3'>
+                            <i class='bi bi-person-vcard me-2'></i>Informasi
+                            Meja
+                        </h6>
+                        <div class='mb-3'>
+                            <label class='form-label text-muted small'
+                                >Nama Pemesan</label
+                            >
+                            <input
+                                type='text'
+                                class='form-control'
+                                placeholder='Masukkan nama Anda'
+                                required
+                            />
+                        </div>
+                        <div class='mb-4'>
+                            <label class='form-label text-muted small'
+                                >Nomor Meja</label
+                            >
+                            <input
+                                type='number'
+                                class='form-control'
+                                placeholder='Contoh: 12'
+                                required
+                            />
+                        </div>
+
+                        <hr />
+
+                        <!-- Pilihan Pembayaran -->
+                        <h6 class='fw-bold mb-3 mt-4'>
+                            <i class='bi bi-wallet2 me-2'></i>Metode Pembayaran
+                        </h6>
+                        <div class='card border border-danger mb-2'>
+                            <div class='card-body p-2 px-3'>
+                                <div class='form-check'>
+                                    <input
+                                        class='form-check-input'
+                                        type='radio'
+                                        name='paymentMethod'
+                                        id='payCash'
+                                        checked
+                                    />
+                                    <label
+                                        class='form-check-label fw-bold w-100'
+                                        for='payCash'
+                                    >
+                                        Tunai (Bayar di Kasir)
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class='card border mb-3'>
+                            <div class='card-body p-2 px-3'>
+                                <div class='form-check'>
+                                    <input
+                                        class='form-check-input'
+                                        type='radio'
+                                        name='paymentMethod'
+                                        id='payCard'
+                                    />
+                                    <label
+                                        class='form-check-label fw-bold w-100'
+                                        for='payCard'
+                                    >
+                                        Non Tunai (Kartu Debit/Kredit)
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class='modal-footer border-top-0'>
+                        <button
+                            type='button'
+                            class='btn btn-light'
+                            data-bs-toggle='offcanvas'
+                            data-bs-target='#cartOffcanvas'
+                            data-bs-dismiss='modal'
+                            >Kembali ke Pesanan</button
+                        >
+                        <!-- Ini akan memproses API/Backend nantinya -->
+                        <button
+                            type='button'
+                            class='btn btn-danger px-4 fw-bold'
+                            onclick='showSuccessMessage()'
+                            >Proses Pesanan</button
+                        >
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bootstrap JS dan Script Logic -->
+        <script
+            src='/js/bootstrap.bundle.min.js'
+            is:inline
+        ></script>
+        <div
+            id='initialCart'
+            data-cart={JSON.stringify(initialCart)}
+            hidden
+        >
+        </div>
+        <script is:inline>
+            // Array untuk menyimpan data pesanan (state)
+            let cart = JSON.parse(
+                document.getElementById('initialCart').dataset.cart || '[]',
+            );
+
+            // Inisialisasi Offcanvas Bootstrap agar bisa dipanggil via JS
+            const cartOffcanvasEl = document.getElementById('cartOffcanvas');
+            const bsOffcanvas = new bootstrap.Offcanvas(cartOffcanvasEl);
+
+            // Fungsi Format Rupiah
+            const formatRupiah = (number) => {
+                return new Intl.NumberFormat('id-ID', {
+                    style: 'currency',
+                    currency: 'IDR',
+                    minimumFractionDigits: 0,
+                }).format(number);
+            };
+
+            // Fungsi Tambah ke Keranjang
+            function addToCart(id, name, price) {
+                // Cek apakah item sudah ada di keranjang
+                const existingItemIndex = cart.findIndex(
+                    (item) => item.id === id,
+                );
+
+                if (existingItemIndex > -1) {
+                    // Jika ada, tambah quantity
+                    cart[existingItemIndex].qty += 1;
+                } else {
+                    // Jika baru, push ke array
+                    cart.push({ id, name, price, qty: 1 });
+                }
+
+                // Animasi Badge
+                animateBadge();
+
+                // Render ulang tampilan keranjang
+                renderCartUI();
+
+                // Otomatis buka popup (offcanvas) jika ini item pertama yang ditambahkan
+                if (cart.length === 1 && cart[0].qty === 1) {
+                    bsOffcanvas.show();
+                }
+            }
+
+            // Fungsi Ubah Quantity (Plus / Minus)
+            function updateQty(id, delta) {
+                const itemIndex = cart.findIndex((item) => item.id === id);
+                if (itemIndex > -1) {
+                    cart[itemIndex].qty += delta;
+
+                    // Hapus jika qty 0 atau kurang
+                    if (cart[itemIndex].qty <= 0) {
+                        cart.splice(itemIndex, 1);
+                    }
+
+                    renderCartUI();
+                }
+            }
+
+            // Render UI Keranjang
+            function renderCartUI() {
+                const cartList = document.getElementById('cartList');
+                const emptyState = document.getElementById('emptyCartState');
+                const itemsContainer =
+                    document.getElementById('cartItemsContainer');
+                const footer = document.getElementById('cartFooter');
+                const badge = document.getElementById('cartBadge');
+
+                // Reset List HTML
+                cartList.innerHTML = '';
+
+                let totalQty = 0;
+                let subtotal = 0;
+
+                if (cart.length === 0) {
+                    // Tampilkan Empty State
+                    emptyState.classList.remove('d-none');
+                    itemsContainer.classList.add('d-none');
+                    footer.classList.add('d-none');
+                    badge.textContent = '0';
+                } else {
+                    // Sembunyikan Empty State
+                    emptyState.classList.add('d-none');
+                    itemsContainer.classList.remove('d-none');
+                    footer.classList.remove('d-none');
+
+                    // Generate HTML List Item
+                    cart.forEach((item) => {
+                        totalQty += item.qty;
+                        const itemTotal = item.price * item.qty;
+                        subtotal += itemTotal;
+
+                        cartList.innerHTML += `
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-3 px-0 border-bottom">
+                            <div class="me-auto pe-2">
+                                <h6 class="mb-1 fw-bold fs-6">${item.name}</h6>
+                                <small class="text-danger fw-bold">${formatRupiah(item.price)}</small>
+                            </div>
+                            <div class="d-flex align-items-center bg-light rounded-pill p-1 border">
+                                <button onclick="updateQty(${item.id}, -1)" class="btn qty-btn"><i class="bi bi-dash"></i></button>
+                                <span class="fw-bold text-center" style="min-width: 30px;">${item.qty}</span>
+                                <button onclick="updateQty(${item.id}, 1)" class="btn qty-btn"><i class="bi bi-plus"></i></button>
+                            </div>
+                        </li>
+                    `;
+                    });
+
+                    badge.textContent = totalQty;
+
+                    // Hitung Pajak dan Total
+                    const grandTotal = subtotal;
+
+                    // Update Label Harga
+                    document.getElementById('subtotalLabel').textContent =
+                        formatRupiah(subtotal);
+                    document.getElementById('totalLabel').textContent =
+                        formatRupiah(grandTotal);
+                    document.getElementById('cartDataInput').value =
+                        JSON.stringify(cart);
+                }
+            }
+
+            // Animasi kecil saat tambah barang
+            function animateBadge() {
+                const badge = document.getElementById('cartBadge');
+                badge.classList.add('cart-bump');
+                setTimeout(() => {
+                    badge.classList.remove('cart-bump');
+                }, 200);
+            }
+
+            // Logic Filter Kategori
+            const filterBtns = document.querySelectorAll('.filter-btn');
+            const productItems = document.querySelectorAll(
+                '#productGrid .product-item',
+            );
+
+            filterBtns.forEach((btn) => {
+                btn.addEventListener('click', function () {
+                    // Hapus state aktif dari semua tombol filter
+                    filterBtns.forEach((b) => {
+                        b.classList.remove('active');
+                        b.classList.add('bg-white', 'border');
+                    });
+
+                    // Tambahkan state aktif ke tombol yang diklik
+                    this.classList.add('active');
+                    this.classList.remove('bg-white', 'border');
+
+                    // Dapatkan nilai kategori dari tombol
+                    const selectedCategory = this.getAttribute('data-category');
+
+                    // Tampilkan atau sembunyikan produk sesuai kategori
+                    productItems.forEach((item) => {
+                        if (
+                            selectedCategory === 'semua' ||
+                            item.getAttribute('data-category') ===
+                                selectedCategory
+                        ) {
+                            item.classList.remove('d-none'); // Tampilkan produk menggunakan utilitas bawaan bootstrap (display block)
+                        } else {
+                            item.classList.add('d-none'); // Sembunyikan produk menggunakan utilitas display:none bootstrap
+                        }
+                    });
+                });
+            });
+
+            // Render kembali cart yang dikirim dari halaman checkout.
+            renderCartUI();
+
+            // Dummy fungsi sukses (Mengganti alert)
+            function showSuccessMessage() {
+                const modalBody = document.querySelector(
+                    '#checkoutModal .modal-body',
+                );
+                const modalFooter = document.querySelector(
+                    '#checkoutModal .modal-footer',
+                );
+
+                modalBody.innerHTML = `
+                <div class="text-center py-4">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 4rem;"></i>
+                    <h4 class="fw-bold mt-3">Pesanan Berhasil Dibuat!</h4>
+                    <p class="text-muted">Tagihan Anda sedang dicetak. Silakan menuju kasir jika memilih pembayaran Tunai.</p>
+                </div>
+            `;
+                modalFooter.innerHTML = `
+                <button type="button" class="btn btn-danger w-100 fw-bold" data-bs-dismiss="modal" onclick="location.reload()">Selesai</button>
+            `;
+            }
+        </script>
+    </body>
 </html>

@@ -1,0 +1,93 @@
+---
+const {
+    variant = 'transaction',
+    title = '',
+    backAction = '/',
+    backMethod = 'GET',
+    backLabel = 'Kembali ke Menu',
+    cartData = '',
+} = Astro.props;
+
+const isMenu = variant === 'menu';
+const isCheckout = variant === 'checkout';
+const isBilling = variant === 'billing';
+const navClass = isMenu
+    ? 'navbar navbar-expand-lg navbar-dark bg-danger sticky-top shadow-sm'
+    : isBilling
+      ? 'navbar navbar-expand-lg navbar-dark bg-danger sticky-top shadow-sm mb-4'
+      : 'payment-header bg-danger text-white shadow-sm';
+const containerClass = isMenu
+    ? 'container'
+    : isCheckout || variant === 'payment'
+      ? 'container py-3'
+      : 'container d-flex align-items-center justify-content-between';
+---
+
+{
+    isCheckout ? (
+        <header class='checkout-header bg-danger text-white shadow-sm'>
+            <div class={containerClass}>
+                <div class='d-flex align-items-center justify-content-between'>
+                    <form
+                        action={backAction}
+                        method={backMethod}
+                        class='m-0'
+                    >
+                        <input
+                            type='hidden'
+                            name='cart_data'
+                            value={cartData}
+                        />
+                        <button
+                            type='submit'
+                            class='btn btn-link text-white text-decoration-none p-0'
+                        >
+                            <i class='bi bi-arrow-left me-2' />
+                            {backLabel}
+                        </button>
+                    </form>
+                    <strong class='fs-5'>
+                        <i class='bi bi-shop me-2' />
+                        Dapur Ina Aina
+                    </strong>
+                </div>
+            </div>
+        </header>
+    ) : (
+        <nav class={navClass}>
+            <div class={containerClass}>
+                <a
+                    href={isMenu ? '#' : '/'}
+                    class:list={[
+                        'text-decoration-none',
+                        isMenu
+                            ? 'navbar-brand fw-bold fs-4'
+                            : 'navbar-brand fw-bold fs-4 text-white',
+                    ]}
+                >
+                    <i class='bi bi-shop me-2' /> Dapur Ina Aina
+                </a>
+
+                {isMenu ? (
+                    <button
+                        class='btn btn-light position-relative rounded-pill px-3 py-2 fw-bold text-danger shadow-sm'
+                        type='button'
+                        data-bs-toggle='offcanvas'
+                        data-bs-target='#cartOffcanvas'
+                        aria-controls='cartOffcanvas'
+                    >
+                        <i class='bi bi-cart-fill me-1' /> Pesanan
+                        <span
+                            id='cartBadge'
+                            class='position-absolute top-0 start-100 translate-middle badge rounded-pill bg-dark cart-badge'
+                        >
+                            0
+                        </span>
+                    </button>
+                ) : (
+                    <span class='fw-bold text-white'>{title}</span>
+                )}
+            </div>
+        </nav>
+    )
+}

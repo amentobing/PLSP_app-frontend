@@ -1,0 +1,434 @@
+---
+// @ts-nocheck
+import Navbar from '../../components/Navbar.astro';
+const BACKEND_URL = import.meta.env.BACKEND_URL;
+const orderId = Astro.params.id;
+let backendPayload = null;
+let errorMessage = '';
+
+if (!orderId) {
+    errorMessage = 'ID pesanan tidak ditemukan.';
+} else {
+    try {
+        const response = await fetch(
+            `${BACKEND_URL}/api/pesanan/${encodeURIComponent(orderId)}/struk`,
+        );
+        backendPayload = await response.json();
+
+        if (!response.ok || backendPayload.status !== 'success') {
+            errorMessage =
+                backendPayload.message || 'Data pesanan tidak ditemukan.';
+        }
+    } catch (error) {
+        errorMessage = 'Backend billing tidak dapat dihubungi.';
+        console.error(error);
+    }
+}
+
+const billingData = backendPayload?.data;
+const kembalianPembayaran =
+    billingData?.kembalian ??
+    billingData?.uang_kembali ??
+    billingData?.kembalian_uang ??
+    0;
+const formatRupiah = (value) =>
+    new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        minimumFractionDigits: 0,
+    }).format(Number(value || 0));
+const formatTanggal = (value) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+---
+
+<!doctype html>
+<html lang='id'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta
+            name='viewport'
+            content='width=device-width, initial-scale=1.0'
+        />
+        <title>Struk Pembayaran - Dapur Ina Aina</title>
+        <!-- Bootstrap 5 CSS -->
+        <link
+            href='/css/bootstrap.min.css'
+            rel='stylesheet'
+        />
+        <!-- Bootstrap Icons -->
+        <link
+            rel='stylesheet'
+            href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css'
+        />
+        <!-- html2canvas untuk fitur Unduh Struk -->
+        <script
+            src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
+        ></script>
+
+        <style>
+            body {
+                background-color: #f3f3f3;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                -webkit-font-smoothing: antialiased;
+                color: #111111;
+            }
+
+            .billing-error {
+                border: 0;
+                border-radius: 15px;
+            }
+
+            .billing-actions {
+                max-width: 400px;
+            }
+
+            #receiptArea {
+                background: transparent;
+                max-width: 720px;
+                margin: 0 auto;
+                padding: 24px 0 0;
+                font-family: 'Courier New', Courier, monospace;
+                color: #111111;
+                position: relative;
+            }
+
+            .receipt-header {
+                text-align: center;
+                margin-bottom: 18px;
+            }
+
+            .receipt-header .shop-icon {
+                font-size: 2.8rem;
+                display: inline-block;
+                margin-bottom: 8px;
+                line-height: 1;
+            }
+
+            .receipt-header h4 {
+                font-weight: 700;
+                margin: 0;
+                font-size: clamp(2rem, 4vw, 4rem);
+                letter-spacing: 0.08em;
+                line-height: 1.1;
+                font-family: 'Courier New', Courier, monospace;
+            }
+
+            .receipt-header .small-line {
+                font-size: 1.05rem;
+                font-style: italic;
+                line-height: 1.6;
+                color: #1a1a1a;
+            }
+
+            .dashed-divider {
+                border-bottom: 2px dashed rgba(0, 0, 0, 0.35);
+                margin: 18px 0;
+            }
+
+            .receipt-table {
+                width: 100%;
+                font-size: 1.05rem;
+                border-collapse: collapse;
+            }
+
+            .receipt-table td {
+                padding: 6px 0;
+                vertical-align: top;
+            }
+
+            .text-right {
+                text-align: right;
+            }
+
+            .receipt-title {
+                font-weight: 700;
+                font-size: 1.8rem;
+                letter-spacing: 0.02em;
+            }
+
+            .receipt-total {
+                font-size: 1.1rem;
+                font-weight: 700;
+            }
+
+            .status-stamp {
+                display: inline-block;
+                border: 3px solid #198754;
+                color: #198754;
+                font-size: clamp(1.6rem, 3vw, 2.4rem);
+                font-weight: 700;
+                padding: 6px 20px;
+                border-radius: 12px;
+                transform: rotate(-5deg);
+                margin: 12px 0 16px;
+                letter-spacing: 0.04em;
+                background: rgba(25, 135, 84, 0.03);
+            }
+
+            .receipt-footer {
+                text-align: center;
+                font-size: 1.1rem;
+                line-height: 1.6;
+                margin-top: 30px;
+            }
+
+            button,
+            a {
+                touch-action: manipulation;
+            }
+            .btn-action {
+                border-radius: 50rem;
+                padding: 12px;
+                font-weight: bold;
+                font-size: 1rem;
+            }
+        </style>
+    </head>
+    <body class='pb-5'>
+        <!-- Topbar -->
+        <Navbar
+            variant='billing'
+            title='Struk Pembayaran'
+        />
+
+        <!-- Kontainer Utama -->
+        <div class='container px-3'>
+            {
+                errorMessage ? (
+                    <div
+                        class='billing-error alert alert-danger text-center mx-auto mb-4'
+                        style='max-width: 400px;'
+                    >
+                        <i class='bi bi-x-circle fs-1 d-block mb-2' />
+                        <h1 class='h5'>Struk Tidak Dapat Dimuat</h1>
+                        <p class='mb-0'>{errorMessage}</p>
+                    </div>
+                ) : (
+                    <div
+                        id='receiptArea'
+                        class='mb-4'
+                    >
+                        <div class='receipt-header'>
+                            <div class='shop-icon'>
+                                <i class='bi bi-shop text-dark' />
+                            </div>
+                            <h4>DAPUR INA AINA</h4>
+                            <div class='small-line'>
+                                Jl. Raya Kenangan No.123, Depok
+                            </div>
+                            <div class='small-line'>Telp: 0812-3456-7890</div>
+                        </div>
+
+                        <div class='dashed-divider' />
+
+                        <table class='receipt-table'>
+                            <tr>
+                                <td>Order ID</td>
+                                <td
+                                    class='text-right'
+                                    id='render-id'
+                                >
+                                    #DIA-
+                                    {String(billingData.id_pesanan).padStart(
+                                        4,
+                                        '0',
+                                    )}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Tanggal</td>
+                                <td
+                                    class='text-right'
+                                    id='render-tgl'
+                                >
+                                    {formatTanggal(
+                                        billingData.tgl_bayar ||
+                                            billingData.tgl_pesanan,
+                                    )}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Pelanggan</td>
+                                <td
+                                    class='text-right'
+                                    id='render-nama'
+                                >
+                                    {billingData.nama_pelanggan || '-'}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>No. Meja</td>
+                                <td
+                                    class='text-right'
+                                    id='render-meja'
+                                >
+                                    {billingData.no_meja || '-'}
+                                </td>
+                            </tr>
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <table
+                            class='receipt-table'
+                            id='render-items'
+                        >
+                            {(billingData.items || []).map((item) => (
+                                <>
+                                    <tr>
+                                        <td
+                                            colspan='2'
+                                            class='receipt-title pb-1'
+                                        >
+                                            {item.nama_produk}
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            {item.jumlah_beli} x{' '}
+                                            {formatRupiah(item.harga)}
+                                        </td>
+                                        <td class='text-right'>
+                                            {formatRupiah(item.sub_total)}
+                                        </td>
+                                    </tr>
+                                </>
+                            ))}
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <table class='receipt-table receipt-total'>
+                            <tr>
+                                <td>TOTAL BAYAR</td>
+                                <td
+                                    class='text-right'
+                                    id='render-total'
+                                >
+                                    {formatRupiah(billingData.total_pembayaran)}
+                                </td>
+                            </tr>
+                            {Number(kembalianPembayaran) > 0 && (
+                                <tr>
+                                    <td>KEMBALIAN</td>
+                                    <td class='text-right'>
+                                        {formatRupiah(kembalianPembayaran)}
+                                    </td>
+                                </tr>
+                            )}
+                        </table>
+
+                        <div class='dashed-divider' />
+
+                        <div class='text-center mt-3'>
+                            <div class='small mb-1'>Status Pembayaran</div>
+                            <div
+                                class='status-stamp'
+                                id='render-status'
+                            >
+                                {billingData.status_pembayaran || 'Berhasil'}
+                            </div>
+                            <div
+                                class='small mt-2'
+                                id='render-metode'
+                            >
+                                Metode: {billingData.metode || '-'}
+                            </div>
+                        </div>
+
+                        <div class='receipt-footer'>
+                            <div>Terima Kasih Atas Kunjungan Anda</div>
+                            <div>Silakan datang kembali :)</div>
+                        </div>
+                    </div>
+                )
+            }
+            <!-- Akhir Area Struk -->
+
+            <!-- Tombol Aksi Bawah -->
+            <div class='billing-actions d-flex flex-column gap-3 mx-auto'>
+                {
+                    !errorMessage && (
+                        <button
+                            class='btn btn-danger btn-action shadow-sm'
+                            onclick='downloadStruk()'
+                            id='btnDownload'
+                        >
+                            <i class='bi bi-download me-2' /> Simpan Struk ke HP
+                        </button>
+                    )
+                }
+                <a
+                    href='/'
+                    class='btn btn-outline-danger btn-action'
+                >
+                    Kembali ke Beranda
+                </a>
+            </div>
+        </div>
+
+        <!-- Bootstrap JS -->
+        <script
+            src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'
+        ></script>
+
+        <!-- Script Logic Download -->
+        <script is:inline>
+            // Fungsi untuk men-download struk menggunakan html2canvas
+            function downloadStruk() {
+                const receiptEl = document.getElementById('receiptArea');
+                const btn = document.getElementById('btnDownload');
+
+                // Ubah state tombol menjadi loading (UX Feedback)
+                const originalBtnText = btn.innerHTML;
+                btn.innerHTML =
+                    '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Memproses...';
+                btn.disabled = true;
+
+                // Proses capture DOM ke Canvas
+                html2canvas(receiptEl, {
+                    scale: 2, // Kualitas gambar 2x lipat agar tidak pecah di HP
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                })
+                    .then((canvas) => {
+                        // Konversi canvas ke URL base64 image (PNG)
+                        const imageURI = canvas.toDataURL('image/png');
+
+                        // Buat elemen link dummy untuk download otomatis
+                        let downloadLink = document.createElement('a');
+                        downloadLink.href = imageURI;
+                        const receiptId = document
+                            .getElementById('render-id')
+                            .textContent.replace('#', '');
+                        downloadLink.download = `Struk_Dapur_InaAina_${receiptId}.png`;
+
+                        // Trigger klik
+                        document.body.appendChild(downloadLink);
+                        downloadLink.click();
+                        document.body.removeChild(downloadLink);
+
+                        // Kembalikan tombol seperti semula
+                        setTimeout(() => {
+                            btn.innerHTML = originalBtnText;
+                            btn.disabled = false;
+                        }, 1000);
+                    })
+                    .catch((err) => {
+                        console.error('Gagal mengunduh struk: ', err);
+                        alert('Terjadi kesalahan saat mengunduh struk.');
+                        btn.innerHTML = originalBtnText;
+                        btn.disabled = false;
+                    });
+            }
+        </script>
+    </body>
+</html>

@@ -1,0 +1,291 @@
+---
+// @ts-nocheck
+const BACKEND_URL = import.meta.env.BACKEND_URL;
+const jwtToken = Astro.cookies.get('tokenAdmin')?.value;
+let loginError = '';
+let submittedUsername = '';
+
+if (jwtToken) {
+    return Astro.redirect('/admin');
+}
+
+if (Astro.request.method === 'POST') {
+    const formData = await Astro.request.formData();
+    const username = formData.get('username');
+    const password = formData.get('password');
+
+    submittedUsername = typeof username === 'string' ? username : '';
+
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        loginError = 'Username dan password wajib diisi.';
+    } else {
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/login/admin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
+            const result = await response.json();
+
+            if (!response.ok || result.status !== 'sukses') {
+                loginError = result.message || 'Login admin gagal.';
+            } else if (result.data?.token) {
+                Astro.cookies.set('tokenAdmin', result.data.token, {
+                    httpOnly: true,
+                    maxAge: 60 * 60 * 8,
+                    path: '/',
+                    sameSite: 'lax',
+                    secure: import.meta.env.PROD,
+                });
+                return Astro.redirect('/admin');
+            } else {
+                loginError = 'Token login tidak ditemukan.';
+            }
+        } catch (error) {
+            loginError = 'Backend login admin tidak dapat dihubungi.';
+            console.error(error);
+        }
+    }
+}
+---
+
+<!doctype html>
+<html lang='id'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta
+            name='viewport'
+            content='width=device-width, initial-scale=1.0'
+        />
+        <title>Login admin - Dapur Ina Aina</title>
+        <link
+            href='/css/bootstrap.min.css'
+            rel='stylesheet'
+        />
+        <link
+            rel='stylesheet'
+            href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css'
+        />
+        <style>
+            body {
+                background-color: #f0f2f5;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            .login-card {
+                width: 100%;
+                max-width: 400px;
+                border: 0;
+                border-radius: 1rem;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+                overflow: hidden;
+            }
+
+            .login-header {
+                background-color: #dc3545;
+                padding: 30px 20px;
+                text-align: center;
+                color: white;
+            }
+
+            .login-header-icon {
+                font-size: 3rem;
+                margin-bottom: 10px;
+            }
+
+            .form-control {
+                border-radius: 0.5rem;
+                padding: 0.75rem 1rem;
+            }
+
+            .form-control:focus {
+                border-color: #dc3545;
+                box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25);
+            }
+
+            .input-group-text {
+                border-radius: 0.5rem;
+            }
+
+            .login-input-group.has-error > .input-group-text,
+            .login-input-group.has-error > .form-control {
+                border-color: #dc3545;
+            }
+
+            .login-input-group.has-error > .input-group-text {
+                color: #dc3545 !important;
+            }
+
+            #togglePassword {
+                cursor: pointer;
+            }
+
+            .btn-login {
+                border: 0;
+                border-radius: 50rem;
+                padding: 12px;
+                font-weight: 600;
+                font-size: 1.1rem;
+            }
+
+            button,
+            a,
+            .input-group-text {
+                touch-action: manipulation;
+            }
+        </style>
+    </head>
+    <body>
+        <main
+            class='container d-flex align-items-center justify-content-center min-vh-100 px-3'
+        >
+            <section class='card login-card'>
+                <div class='login-header'>
+                    <i class='bi bi-person-badge-fill login-header-icon'></i>
+                    <h1 class='h3 fw-bold mb-0'>Login Admin</h1>
+                    <p class='mb-0 text-white-50 small'>
+                        Restoran Dapur Ina Aina
+                    </p>
+                </div>
+
+                <div class='card-body p-4 p-md-5 bg-white'>
+                    {
+                        loginError && (
+                            <div
+                                class='alert alert-danger text-center'
+                                role='alert'
+                            >
+                                <i class='bi bi-exclamation-circle me-2' />
+                                {loginError}
+                            </div>
+                        )
+                    }
+                    <form
+                        action={Astro.url.pathname}
+                        method='POST'
+                        id='formLoginadmin'
+                    >
+                        <div class='mb-4'>
+                            <label
+                                for='username'
+                                class='form-label fw-bold text-secondary small text-uppercase'
+                                >Username</label
+                            >
+                            <div
+                                class:list={[
+                                    'input-group login-input-group',
+                                    loginError && 'has-error',
+                                ]}
+                            >
+                                <span
+                                    class='input-group-text bg-light text-muted border-end-0'
+                                >
+                                    <i class='bi bi-person'></i>
+                                </span>
+                                <input
+                                    type='text'
+                                    class:list={[
+                                        'form-control border-start-0 ps-0',
+                                        loginError && 'is-invalid',
+                                    ]}
+                                    id='username'
+                                    name='username'
+                                    value={submittedUsername}
+                                    placeholder='Masukkan username admin'
+                                    autocomplete='username'
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div class='mb-4'>
+                            <label
+                                for='password'
+                                class='form-label fw-bold text-secondary small text-uppercase'
+                                >Password</label
+                            >
+                            <div
+                                class:list={[
+                                    'input-group login-input-group',
+                                    loginError && 'has-error',
+                                ]}
+                            >
+                                <span
+                                    class='input-group-text bg-light text-muted border-end-0'
+                                >
+                                    <i class='bi bi-lock'></i>
+                                </span>
+                                <input
+                                    type='password'
+                                    class:list={[
+                                        'form-control border-start-0 border-end-0 ps-0',
+                                        loginError && 'is-invalid',
+                                    ]}
+                                    id='password'
+                                    name='password'
+                                    placeholder='Masukkan password'
+                                    autocomplete='current-password'
+                                    required
+                                />
+                                <button
+                                    type='button'
+                                    class='input-group-text bg-white text-muted border-start-0'
+                                    id='togglePassword'
+                                    aria-label='Tampilkan password'
+                                >
+                                    <i
+                                        class='bi bi-eye-slash'
+                                        id='toggleIcon'
+                                    ></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class='mt-5'>
+                            <button
+                                type='submit'
+                                class='btn btn-danger w-100 btn-login shadow-sm'
+                            >
+                                Masuk
+                                <i class='bi bi-box-arrow-in-right ms-2'></i>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+        </main>
+
+        <script
+            src='/js/bootstrap.bundle.min.js'
+            is:inline
+        ></script>
+        <script is:inline>
+            const passwordInput = document.getElementById('password');
+            const togglePassword = document.getElementById('togglePassword');
+            const toggleIcon = document.getElementById('toggleIcon');
+            const loginForm = document.getElementById('formLoginadmin');
+
+            togglePassword.addEventListener('click', () => {
+                const isHidden = passwordInput.type === 'password';
+                passwordInput.type = isHidden ? 'text' : 'password';
+                toggleIcon.classList.toggle('bi-eye-slash', !isHidden);
+                toggleIcon.classList.toggle('bi-eye', isHidden);
+                togglePassword.setAttribute(
+                    'aria-label',
+                    isHidden ? 'Sembunyikan password' : 'Tampilkan password',
+                );
+            });
+
+            loginForm.addEventListener('submit', () => {
+                const submitButton = loginForm.querySelector(
+                    'button[type="submit"]',
+                );
+                submitButton.innerHTML =
+                    '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Memeriksa...';
+                submitButton.disabled = true;
+                submitButton.classList.add('opacity-75');
+            });
+        </script>
+    </body>
+</html>
